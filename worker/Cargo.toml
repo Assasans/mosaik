@@ -1,0 +1,30 @@
+[package]
+name = "worker"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.70"
+futures = "0.3.28"
+serde = "1.0.159"
+serde_json = "1.0.95"
+serde_yaml = "0.9.19"
+simd-json = { version = "0.6.0", features = ["allow-non-simd"] }
+tokio = { version = "1.27.0", features = ["full"] }
+tracing = "0.1.37"
+tracing-subscriber = "0.3.16"
+twilight-cache-inmemory = "0.14.0"
+twilight-gateway = { version = "0.14.0", features = ["simd-json"] }
+twilight-http = { version = "0.14.0", features = ["simd-json"] }
+twilight-mention = "0.14.0"
+twilight-model = "0.14.0"
+twilight-standby = "0.14.0"
+twilight-util = { version = "0.14.0", features = ["full"] }
+
+[dependencies.songbird]
+git = "https://github.com/serenity-rs/songbird.git"
+branch = "next"
+default-features = false
+features = ["driver", "rustls", "twilight", "gateway"]
