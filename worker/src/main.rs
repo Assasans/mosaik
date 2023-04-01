@@ -4,8 +4,10 @@ use songbird::{
   tracks::{PlayMode, TrackHandle},
   Songbird,
 };
+use tracing_subscriber::layer::SubscriberExt;
+
 use std::{collections::HashMap, env, error::Error, future::Future, sync::Arc};
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, fs::File, io::AsyncReadExt};
 use twilight_gateway::{Cluster, Shard, Event, Intents};
 use twilight_http::Client as HttpClient;
 use twilight_model::{
@@ -41,13 +43,17 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     .with_max_level(tracing::Level::DEBUG)
     .init();
 
+  // tracing::subscriber::set_global_default(
+  //   tracing_subscriber::registry().with(tracing_tracy::TracyLayer::new())
+  // ).expect("set up the subscriber");
+
   let (mut events, state) = {
     let token = env::var("DISCORD_TOKEN")?;
 
     let http = HttpClient::new(token.clone());
     let user_id = http.current_user().exec().await?.model().await?.id;
 
-    let intents = Intents::GUILD_MESSAGES | Intents::GUILD_VOICE_STATES | Intents::MESSAGE_CONTENT;
+    let intents = Intents::all();
     let (cluster, events) = Cluster::new(token, intents).await?;
     cluster.up().await;
 
@@ -90,24 +96,23 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
 }
 
 async fn join(msg: Message, state: State) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-  state
-    .http
-    .create_message(msg.channel_id)
-    .content("What's the channel ID you want me to join?")?
-    .exec()
-    .await?;
+  // state
+  //   .http
+  //   .create_message(msg.channel_id)
+  //   .content("What's the channel ID you want me to join?")?
+  //   .exec()
+  //   .await?;
 
-  let author_id = msg.author.id;
-  let msg = state
-    .standby
-    .wait_for_message(msg.channel_id, move |new_msg: &MessageCreate| {
-      new_msg.author.id == author_id
-    })
-    .await?;
-  let channel_id = msg.content.parse::<u64>()?;
+  // let author_id = msg.author.id;
+  // let msg = state
+  //   .standby
+  //   .wait_for_message(msg.channel_id, move |new_msg: &MessageCreate| {
+  //     new_msg.author.id == author_id
+  //   })
+  //   .await?;
+  let channel_id = 896003879706193941; // msg.content.parse::<u64>()?;
 
   let guild_id = msg.guild_id.ok_or("Can't join a non-guild channel.")?;
-
   let success = state.songbird.join(guild_id, Id::<ChannelMarker>::new(channel_id)).await;
 
   let content = match success {
@@ -151,62 +156,26 @@ async fn play(msg: Message, state: State) -> Result<(), Box<dyn Error + Send + S
     msg.channel_id,
     msg.author.name
   );
-  state
-    .http
-    .create_message(msg.channel_id)
-    .content("What's the URL of the audio to play?")?
-    .exec()
-    .await?;
-
-  let author_id = msg.author.id;
-  let msg = state
-    .standby
-    .wait_for_message(msg.channel_id, move |new_msg: &MessageCreate| {
-      new_msg.author.id == author_id
-    })
-    .await?;
 
   let guild_id = msg.guild_id.unwrap();
 
-  // if let Ok(song) = Restartable::ytdl(msg.content.clone(), false).await {
-  //   let input = Input::from(song);
+  let mut file = songbird::input::File::new("/home/assasans/Videos/Tarantella Napoletana (Cooking Simulator Pizza Version) [960806794].mp3");
+  let input = Input::Lazy(Box::new(file));
 
-  //   let content = format!(
-  //     "Playing **{:?}** by **{:?}**",
-  //     input
-  //       .metadata()
-  //       .track
-  //       .as_ref()
-  //       .unwrap_or(&"<UNKNOWN>".to_string()),
-  //     input
-  //       .metadata()
-  //       .artist
-  //       .as_ref()
-  //       .unwrap_or(&"<UNKNOWN>".to_string()),
-  //   );
+  if let Some(call_lock) = state.songbird.get(guild_id) {
+    let mut call = call_lock.lock().await;
+    let handle = call.play_input(input);
 
-  //   state
-  //     .http
-  //     .create_message(msg.channel_id)
-  //     .content(&content)?
-  //     .exec()
-  //     .await?;
+    let mut store = state.trackdata.write().await;
+    store.insert(guild_id, handle);
 
-  //   if let Some(call_lock) = state.songbird.get(guild_id) {
-  //     let mut call = call_lock.lock().await;
-  //     let handle = call.play_source(input);
-
-  //     let mut store = state.trackdata.write().await;
-  //     store.insert(guild_id, handle);
-  //   }
-  // } else {
-  //   state
-  //     .http
-  //     .create_message(msg.channel_id)
-  //     .content("Didn't find any results")?
-  //     .exec()
-  //     .await?;
-  // }
+    state
+      .http
+      .create_message(msg.channel_id)
+      .content("Playing")?
+      .exec()
+      .await?;
+  }
 
   Ok(())
 }
