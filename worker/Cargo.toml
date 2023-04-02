@@ -3,8 +3,6 @@ name = "worker"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 anyhow = "1.0.70"
 futures = "0.3.28"
@@ -18,12 +16,15 @@ tracing-subscriber = "0.3.16"
 twilight-cache-inmemory = "0.14.0"
 twilight-gateway = { version = "0.14.0", features = ["simd-json"] }
 twilight-http = { version = "0.14.0", features = ["simd-json"] }
+twilight-interactions = "0.14.0"
 twilight-mention = "0.14.0"
 twilight-model = "0.14.0"
 twilight-standby = "0.14.0"
 twilight-util = { version = "0.14.0", features = ["full"] }
 symphonia = { version = "0.5.2", features = ["all"] }
 tracing-tracy = "0.10.2"
+reqwest = "0.11.16"
+async-trait = "0.1.68"
 
 [dependencies.songbird]
 git = "https://github.com/serenity-rs/songbird.git"

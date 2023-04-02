@@ -1,9 +1,13 @@
+pub mod providers;
+
 use futures::StreamExt;
 use songbird::{
-  input::{Input},
+  input::{Input, LiveInput, AudioStream, HttpRequest},
   tracks::{PlayMode, TrackHandle},
   Songbird,
 };
+use reqwest::Client;
+use symphonia::core::io::{MediaSource, ReadOnlySource};
 use tracing_subscriber::layer::SubscriberExt;
 
 use std::{collections::HashMap, env, error::Error, future::Future, sync::Arc};
@@ -16,6 +20,8 @@ use twilight_model::{
   id::{marker::{GuildMarker, ChannelMarker}, Id},
 };
 use twilight_standby::Standby;
+
+use crate::providers::{yt_dlp::YoutubeDlMediaProvider, MediaProvider};
 
 type State = Arc<StateRef>;
 
@@ -51,7 +57,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let token = env::var("DISCORD_TOKEN")?;
 
     let http = HttpClient::new(token.clone());
-    let user_id = http.current_user().exec().await?.model().await?.id;
+    let user_id = http.current_user().await?.model().await?.id;
 
     let intents = Intents::all();
     let (cluster, events) = Cluster::new(token, intents).await?;
@@ -100,7 +106,6 @@ async fn join(msg: Message, state: State) -> Result<(), Box<dyn Error + Send + S
   //   .http
   //   .create_message(msg.channel_id)
   //   .content("What's the channel ID you want me to join?")?
-  //   .exec()
   //   .await?;
 
   // let author_id = msg.author.id;
@@ -110,7 +115,7 @@ async fn join(msg: Message, state: State) -> Result<(), Box<dyn Error + Send + S
   //     new_msg.author.id == author_id
   //   })
   //   .await?;
-  let channel_id = 896003879706193941; // msg.content.parse::<u64>()?;
+  let channel_id = 731176441378504705; // msg.content.parse::<u64>()?;
 
   let guild_id = msg.guild_id.ok_or("Can't join a non-guild channel.")?;
   let success = state.songbird.join(guild_id, Id::<ChannelMarker>::new(channel_id)).await;
@@ -124,7 +129,6 @@ async fn join(msg: Message, state: State) -> Result<(), Box<dyn Error + Send + S
     .http
     .create_message(msg.channel_id)
     .content(&content)?
-    .exec()
     .await?;
 
   Ok(())
@@ -144,7 +148,6 @@ async fn leave(msg: Message, state: State) -> Result<(), Box<dyn Error + Send + 
     .http
     .create_message(msg.channel_id)
     .content("Left the channel")?
-    .exec()
     .await?;
 
   Ok(())
@@ -159,8 +162,8 @@ async fn play(msg: Message, state: State) -> Result<(), Box<dyn Error + Send + S
 
   let guild_id = msg.guild_id.unwrap();
 
-  let mut file = songbird::input::File::new("/home/assasans/Videos/Tarantella Napoletana (Cooking Simulator Pizza Version) [960806794].mp3");
-  let input = Input::Lazy(Box::new(file));
+  let provider = YoutubeDlMediaProvider::new("https://www.youtube.com/watch?v=2CkvMvVZ4Ws".to_owned());
+  let input = provider.to_input().await?;
 
   if let Some(call_lock) = state.songbird.get(guild_id) {
     let mut call = call_lock.lock().await;
@@ -173,7 +176,6 @@ async fn play(msg: Message, state: State) -> Result<(), Box<dyn Error + Send + S
       .http
       .create_message(msg.channel_id)
       .content("Playing")?
-      .exec()
       .await?;
   }
 
@@ -216,7 +218,6 @@ async fn pause(msg: Message, state: State) -> Result<(), Box<dyn Error + Send + 
     .http
     .create_message(msg.channel_id)
     .content(&content)?
-    .exec()
     .await?;
 
   Ok(())
@@ -232,7 +233,6 @@ async fn seek(msg: Message, state: State) -> Result<(), Box<dyn Error + Send + S
     .http
     .create_message(msg.channel_id)
     .content("Where in the track do you want to seek to (in seconds)?")?
-    .exec()
     .await?;
 
   let author_id = msg.author.id;
@@ -258,7 +258,6 @@ async fn seek(msg: Message, state: State) -> Result<(), Box<dyn Error + Send + S
     .http
     .create_message(msg.channel_id)
     .content(&content)?
-    .exec()
     .await?;
 
   Ok(())
@@ -282,7 +281,6 @@ async fn stop(msg: Message, state: State) -> Result<(), Box<dyn Error + Send + S
     .http
     .create_message(msg.channel_id)
     .content("Stopped the track")?
-    .exec()
     .await?;
 
   Ok(())
@@ -298,7 +296,6 @@ async fn volume(msg: Message, state: State) -> Result<(), Box<dyn Error + Send +
     .http
     .create_message(msg.channel_id)
     .content("What's the volume you want to set (0.0-10.0, 1.0 being the default)?")?
-    .exec()
     .await?;
 
   let author_id = msg.author.id;
@@ -316,7 +313,6 @@ async fn volume(msg: Message, state: State) -> Result<(), Box<dyn Error + Send +
       .http
       .create_message(msg.channel_id)
       .content("Invalid volume!")?
-      .exec()
       .await?;
 
     return Ok(());
@@ -335,7 +331,6 @@ async fn volume(msg: Message, state: State) -> Result<(), Box<dyn Error + Send +
     .http
     .create_message(msg.channel_id)
     .content(&content)?
-    .exec()
     .await?;
 
   Ok(())
