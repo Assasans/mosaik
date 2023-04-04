@@ -11,6 +11,6 @@ use twilight_model::{gateway::payload::incoming::InteractionCreate, application:
 use crate::State;
 
 #[async_trait]
-pub trait CommandHandler : Sync {
+pub trait CommandHandler: Sync {
   async fn run(&self, state: State, interaction: Box<InteractionCreate>) -> Result<()>;
 }

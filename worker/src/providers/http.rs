@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
@@ -20,5 +22,11 @@ impl MediaProvider for HttpMediaProvider {
   async fn to_input(&self) -> Result<Input> {
     let client = Client::new(); // TODO(Assasans): Shared
     Ok(Input::Lazy(Box::new(HttpRequest::new(client, self.url.clone()))))
+  }
+}
+
+impl Debug for HttpMediaProvider {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "HttpMediaProvider {{ url: {} }}", self.url)
   }
 }

@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use twilight_model::{gateway::payload::incoming::InteractionCreate, application::interaction::{application_command::{CommandData, CommandOptionValue}, InteractionData}, http::interaction::{InteractionResponse, InteractionResponseType}};
 use twilight_util::builder::InteractionResponseDataBuilder;
 
-use crate::{try_unpack, State, interaction_response, get_option_as, providers::{yt_dlp::YoutubeDlMediaProvider, MediaProvider}};
+use crate::{try_unpack, State, interaction_response, get_option_as, providers::{yt_dlp::YoutubeDlMediaProvider, MediaProvider}, player::track::Track};
 
 use super::CommandHandler;
 
@@ -28,21 +28,27 @@ impl CommandHandler for PlayCommand {
       .unwrap();
 
     let provider = YoutubeDlMediaProvider::new(source);
-    let input = provider.to_input().await?;
 
-    if let Some(call_lock) = state.songbird.get(guild_id) {
-      let mut call = call_lock.lock().await;
-      let handle = call.play_input(input);
+    match state.players.write().await.get_mut(&guild_id) {
+      Some(player) => {
+        player.tracks.push(Track::new(Box::new(provider)));
+        let track = player.play(player.tracks.len() - 1).await?; // TODO(Assasans)
 
-      let mut store = state.trackdata.write().await;
-      store.insert(guild_id, handle);
-
-      state
-        .http
-        .interaction(state.application_id)
-        .update_response(&interaction.token)
-        .content(Some(&format!("Playing track")))?
-        .await?;
+        state
+          .http
+          .interaction(state.application_id)
+          .update_response(&interaction.token)
+          .content(Some(&format!("Playing track `{:?}`", track)))?
+          .await?;
+      }
+      None => {
+        state
+          .http
+          .interaction(state.application_id)
+          .update_response(&interaction.token)
+          .content(Some(&format!("No player for guild `{}`", guild_id)))?
+          .await?;
+      }
     }
 
     Ok(())

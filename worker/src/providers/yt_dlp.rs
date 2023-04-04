@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use songbird::input::Input;
@@ -32,5 +34,11 @@ impl MediaProvider for YoutubeDlMediaProvider {
 
     let http = HttpMediaProvider::new(url.to_owned());
     http.to_input().await
+  }
+}
+
+impl Debug for YoutubeDlMediaProvider {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "YoutubeDlMediaProvider {{ url: {} }}", self.url)
   }
 }

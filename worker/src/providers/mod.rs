@@ -2,11 +2,12 @@ pub mod file;
 pub mod http;
 pub mod yt_dlp;
 
+use std::fmt::Debug;
 use anyhow::Result;
 use async_trait::async_trait;
 use songbird::input::Input;
 
 #[async_trait]
-pub trait MediaProvider {
+pub trait MediaProvider: Sync + Send + Debug {
   async fn to_input(&self) -> Result<Input>;
 }

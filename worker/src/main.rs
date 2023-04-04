@@ -1,10 +1,12 @@
 pub mod util;
 pub mod commands;
 pub mod providers;
+pub mod player;
 
 use anyhow::Context;
 use commands::{JoinCommand, CommandHandler, PlayCommand};
 use futures::StreamExt;
+use player::Player;
 use songbird::{
   input::{Input, LiveInput, AudioStream, HttpRequest},
   tracks::{PlayMode, TrackHandle},
@@ -12,7 +14,7 @@ use songbird::{
 };
 use reqwest::Client;
 use symphonia::core::io::{MediaSource, ReadOnlySource};
-use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::{layer::SubscriberExt, EnvFilter};
 use twilight_cache_inmemory::InMemoryCache;
 use twilight_util::builder::{command::{StringBuilder, ChannelBuilder}, InteractionResponseDataBuilder};
 
@@ -37,6 +39,7 @@ pub struct StateRef {
   cache: InMemoryCache,
   application_id: Id<ApplicationMarker>,
   trackdata: RwLock<HashMap<Id<GuildMarker>, TrackHandle>>,
+  players: RwLock<HashMap<Id<GuildMarker>, Player>>,
   songbird: Songbird,
   standby: Standby,
 }
@@ -71,6 +74,7 @@ macro_rules! argument {
 async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
   tracing_subscriber::fmt()
     .with_max_level(tracing::Level::DEBUG)
+    .with_env_filter(EnvFilter::from_default_env())
     .init();
 
   // tracing::subscriber::set_global_default(
@@ -87,7 +91,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let interactions = http.interaction(application_id);
 
     interactions
-      .create_guild_command(Id::<GuildMarker>::new(646393082430095383))
+      .create_guild_command(Id::<GuildMarker>::new(686219466824089640))
       .chat_input("join", "Join channel")?
       .description_localizations(&localizations! {
         "ru" => "Зайти в канал"
@@ -107,7 +111,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
       .await?;
 
     interactions
-      .create_guild_command(Id::<GuildMarker>::new(646393082430095383))
+      .create_guild_command(Id::<GuildMarker>::new(686219466824089640))
       .chat_input("play", "Play a track")?
       .description_localizations(&localizations! {
         "ru" => "Включить трек"
@@ -125,7 +129,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
       ])?
       .await?;
 
-    let intents = Intents::all();
+    let intents = Intents::GUILDS | Intents::GUILD_VOICE_STATES;
     let (cluster, events) = Cluster::new(token, intents).await?;
     cluster.up().await;
 
@@ -138,6 +142,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         cache,
         application_id,
         trackdata: Default::default(),
+        players: Default::default(),
         songbird,
         standby: Standby::new(),
       })
