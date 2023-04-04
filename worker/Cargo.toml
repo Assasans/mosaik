@@ -25,6 +25,7 @@ symphonia = { version = "0.5.2", features = ["all"] }
 tracing-tracy = "0.10.2"
 reqwest = "0.11.16"
 async-trait = "0.1.68"
+thiserror = "1.0.40"
 
 [dependencies.songbird]
 git = "https://github.com/serenity-rs/songbird.git"
