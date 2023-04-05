@@ -1,9 +1,8 @@
 use anyhow::{Result, Context};
 use async_trait::async_trait;
-use twilight_model::{gateway::payload::incoming::InteractionCreate, application::interaction::{application_command::{CommandData, CommandOptionValue}, InteractionData}, http::interaction::{InteractionResponse, InteractionResponseType}};
-use twilight_util::builder::InteractionResponseDataBuilder;
+use twilight_model::{gateway::payload::incoming::InteractionCreate, application::interaction::{application_command::CommandOptionValue, InteractionData}};
 
-use crate::{try_unpack, State, interaction_response, get_option_as, providers::{yt_dlp::YoutubeDlMediaProvider, MediaProvider}, player::track::Track};
+use crate::{try_unpack, State, interaction_response, get_option_as, providers::{yt_dlp::YoutubeDlMediaProvider, MediaProvider}, player::track::Track, reply, update_reply};
 
 use super::CommandHandler;
 
@@ -12,14 +11,10 @@ pub struct PlayCommand;
 #[async_trait]
 impl CommandHandler for PlayCommand {
   async fn run(&self, state: State, interaction: Box<InteractionCreate>) -> Result<()> {
-    state
-      .http
-      .interaction(state.application_id)
-      .create_response(interaction.id, &interaction.token, &interaction_response!(
-        DeferredChannelMessageWithSource,
-        content("Joining...")
-      ))
-      .await?;
+    reply!(state, interaction, &interaction_response!(
+      DeferredChannelMessageWithSource,
+      content("Playing...")
+    )).await?;
 
     let command = try_unpack!(interaction.data.as_ref().context("no interaction data")?, InteractionData::ApplicationCommand)?;
     let guild_id = interaction.guild_id.unwrap();
@@ -40,18 +35,12 @@ impl CommandHandler for PlayCommand {
           .collect::<Vec<String>>()
           .join("\n");
 
-        state
-          .http
-          .interaction(state.application_id)
-          .update_response(&interaction.token)
+        update_reply!(state, interaction)
           .content(Some(&format!("Playing track `{:?}`\n{}", track, metadata_string)))?
           .await?;
       }
       None => {
-        state
-          .http
-          .interaction(state.application_id)
-          .update_response(&interaction.token)
+        update_reply!(state, interaction)
           .content(Some(&format!("No player for guild `{}`", guild_id)))?
           .await?;
       }
