@@ -34,11 +34,17 @@ impl CommandHandler for PlayCommand {
         player.tracks.push(Track::new(Box::new(provider)));
         let track = player.play(player.tracks.len() - 1).await?; // TODO(Assasans)
 
+        let metadata = track.provider.get_metadata().await?;
+        let metadata_string = metadata.iter()
+          .map(|it| format!("`{:?}`", it))
+          .collect::<Vec<String>>()
+          .join("\n");
+
         state
           .http
           .interaction(state.application_id)
           .update_response(&interaction.token)
-          .content(Some(&format!("Playing track `{:?}`", track)))?
+          .content(Some(&format!("Playing track `{:?}`\n{}", track, metadata_string)))?
           .await?;
       }
       None => {
