@@ -1,9 +1,6 @@
 pub mod track;
 
-use std::sync::Arc;
 use anyhow::{Result, Context};
-use songbird::{Call, tracks::TrackHandle};
-use tokio::sync::Mutex;
 use twilight_model::id::{Id, marker::{GuildMarker, ChannelMarker}};
 
 use crate::State;
@@ -27,8 +24,6 @@ pub enum PlayerState {
 #[derive(Debug)]
 pub struct Player {
   pub state: State,
-  pub call: Option<Arc<Mutex<Call>>>,
-  pub handle: Option<TrackHandle>,
 
   pub guild_id: Id<GuildMarker>,
   pub channel_id: Option<Id<ChannelMarker>>,
@@ -44,8 +39,6 @@ impl Player {
   pub fn new(state: State, guild_id: Id<GuildMarker>) -> Self {
     Self {
       state,
-      call: None,
-      handle: None,
 
       guild_id,
       channel_id: None,
@@ -59,10 +52,10 @@ impl Player {
   }
 
   pub async fn play(&mut self, index: usize) -> Result<&Track> {
-    let mut call = self.call.as_ref().context("no call")?.lock().await;
+    // let mut call = self.call.as_ref().context("no call")?.lock().await;
     let track = self.tracks.get(index).context("no track")?;
     self.current = index;
-    self.handle = Some(call.play_only_input(track.provider.to_input().await?));
+    // self.handle = Some(call.play_only_input(track.provider.to_input().await?));
 
     Ok(track)
   }

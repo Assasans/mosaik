@@ -13,22 +13,29 @@ simd-json = { version = "0.6.0", features = ["allow-non-simd"] }
 tokio = { version = "1.27.0", features = ["full"] }
 tracing = "0.1.37"
 tracing-subscriber = "0.3.16"
-twilight-cache-inmemory = "0.14.0"
-twilight-gateway = { version = "0.14.0", features = ["simd-json"] }
-twilight-http = { version = "0.14.0", features = ["simd-json"] }
-twilight-interactions = "0.14.0"
-twilight-mention = "0.14.0"
-twilight-model = "0.14.0"
-twilight-standby = "0.14.0"
-twilight-util = { version = "0.14.0", features = ["full"] }
+twilight-cache-inmemory = "0.15.1"
+twilight-gateway = { version = "0.15.1", features = ["simd-json"] }
+twilight-http = { version = "0.15.1", features = ["simd-json"] }
+twilight-interactions = "0.15.1"
+twilight-mention = "0.15.1"
+twilight-model = "0.15.1"
+twilight-standby = "0.15.1"
+twilight-util = { version = "0.15.1", features = ["full"] }
+twilight-voice = { path = "../twilight-voice" }
 symphonia = { version = "0.5.2", features = ["all"] }
 tracing-tracy = "0.10.2"
 reqwest = "0.11.16"
 async-trait = "0.1.68"
 thiserror = "1.0.40"
 
-[dependencies.songbird]
-git = "https://github.com/serenity-rs/songbird.git"
-branch = "next"
-default-features = false
-features = ["driver", "rustls", "twilight", "gateway"]
+# Voice
+audiopus = "0.3.0-rc.0"
+discortp = { version = "0.5.0", features = ["discord-full"] }
+rustls-native-certs = "0.6.2"
+tokio-rustls = "0.24.0"
+tokio-tungstenite = { version = "0.18.0", features = ["tokio-rustls"] }
+xsalsa20poly1305 = { version = "0.9.0", features = ["std"] }
+futures-util = "0.3.28"
+byteorder = "1.4.3"
+rand = "0.8.5"
+opus-mux = "0.1.1"

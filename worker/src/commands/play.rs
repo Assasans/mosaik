@@ -2,7 +2,7 @@ use anyhow::{Result, Context};
 use async_trait::async_trait;
 use twilight_model::{gateway::payload::incoming::InteractionCreate, application::interaction::{application_command::CommandOptionValue, InteractionData}};
 
-use crate::{try_unpack, State, interaction_response, get_option_as, providers::{yt_dlp::YoutubeDlMediaProvider, MediaProvider}, player::track::Track, reply, update_reply};
+use crate::{try_unpack, State, interaction_response, get_option_as, providers::{MediaProvider}, player::track::Track, reply, update_reply};
 
 use super::CommandHandler;
 
@@ -22,29 +22,29 @@ impl CommandHandler for PlayCommand {
       .map(|it| it.unwrap().clone()) // TODO(Assasans)
       .unwrap();
 
-    let provider = YoutubeDlMediaProvider::new(source);
+    // let provider = YoutubeDlMediaProvider::new(source);
 
-    match state.players.write().await.get_mut(&guild_id) {
-      Some(player) => {
-        player.tracks.push(Track::new(Box::new(provider)));
-        let track = player.play(player.tracks.len() - 1).await?; // TODO(Assasans)
+    // match state.players.write().await.get_mut(&guild_id) {
+    //   Some(player) => {
+    //     player.tracks.push(Track::new(Box::new(provider)));
+    //     let track = player.play(player.tracks.len() - 1).await?; // TODO(Assasans)
 
-        let metadata = track.provider.get_metadata().await?;
-        let metadata_string = metadata.iter()
-          .map(|it| format!("`{:?}`", it))
-          .collect::<Vec<String>>()
-          .join("\n");
+    //     let metadata = track.provider.get_metadata().await?;
+    //     let metadata_string = metadata.iter()
+    //       .map(|it| format!("`{:?}`", it))
+    //       .collect::<Vec<String>>()
+    //       .join("\n");
 
-        update_reply!(state, interaction)
-          .content(Some(&format!("Playing track `{:?}`\n{}", track, metadata_string)))?
-          .await?;
-      }
-      None => {
-        update_reply!(state, interaction)
-          .content(Some(&format!("No player for guild `{}`", guild_id)))?
-          .await?;
-      }
-    }
+    //     update_reply!(state, interaction)
+    //       .content(Some(&format!("Playing track `{:?}`\n{}", track, metadata_string)))?
+    //       .await?;
+    //   }
+    //   None => {
+    //     update_reply!(state, interaction)
+    //       .content(Some(&format!("No player for guild `{}`", guild_id)))?
+    //       .await?;
+    //   }
+    // }
 
     Ok(())
   }
