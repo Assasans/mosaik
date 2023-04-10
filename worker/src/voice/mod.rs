@@ -225,16 +225,10 @@ pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, 
   let mut hint = Hint::new();
   hint.with_extension("mp3");
 
-  // Use the default options for metadata and format readers.
-  let meta_opts: MetadataOptions = Default::default();
-  let fmt_opts: FormatOptions = Default::default();
-
-  // Probe the media source.
   let probed = symphonia::default::get_probe()
-    .format(&hint, source, &fmt_opts, &meta_opts)
+    .format(&hint, source, &FormatOptions::default(), &MetadataOptions::default())
     .expect("unsupported format");
 
-  // Get the instantiated format reader.
   let mut format = probed.format;
 
   // Find the first audio track with a known (decodeable) codec.
@@ -244,16 +238,11 @@ pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, 
     .find(|it| it.codec_params.codec != CODEC_TYPE_NULL)
     .expect("no supported audio tracks");
 
-  // Use the default options for the decoder.
-  let dec_opts: DecoderOptions = Default::default();
-
-  // Create a decoder for the track.
-  let mut decoder = get_codecs()
-    .make(&track.codec_params, &dec_opts)
-    .expect("unsupported codec");
-
-  // Store the track identifier, it will be used to filter packets.
   let track_id = track.id;
+
+  let mut decoder = get_codecs()
+    .make(&track.codec_params, &DecoderOptions::default())
+    .expect("unsupported codec");
 
   let mut sequence = random::<u16>();
   let mut timestamp = random::<u32>();
@@ -262,9 +251,9 @@ pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, 
   let mut encoder = Encoder::new(SampleRate::Hz48000, Channels::Stereo, Application::Audio)?;
   encoder.set_bitrate(Bitrate::BitsPerSecond(512000))?;
 
-  let mut opus_decoder = Decoder::new(SampleRate::Hz48000, Channels::Stereo)?;
-
   let mut rtp_packet = [0; 1460];
+
+  let mut opus_decoder = Decoder::new(SampleRate::Hz48000, Channels::Stereo)?;
 
   let mut sample_count = 0;
   let mut sample_buf = None;
@@ -275,17 +264,6 @@ pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, 
 
   let mut send_time = Instant::now();
   let mut send_time_2 = Instant::now();
-
-  // let mut demuxer = Demuxer::new();
-  // loop {
-  //   let mut buf = [0; 8192];
-  //   let size = file.read(&mut buf)?;
-  //   if size == 0 {
-  //     break;
-  //   }
-
-  //   demuxer.push(&buf)?;
-  // }
 
   let mut sample_buffer = Vec::new();
 
@@ -327,10 +305,7 @@ pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, 
       println!("ACK: {:?}", socket.next().await.unwrap());
     }
 
-    // Get the next packet from the media format.
     let packet = match format.next_packet() {
-    // let mut buf = vec![0xf8, 0xff, 0xfe, 0xf8, 0xff, 0xfe, 0xf8, 0xff, 0xfe, 0xf8, 0xff, 0xfe, 0xf8, 0xff, 0xfe];
-    // let mut buf = demuxer.next().unwrap();
       Ok(packet) => packet,
       Err(symphonia::core::errors::Error::ResetRequired) => {
         // The track list has been changed. Re-examine it and create a new set of decoders,
@@ -364,13 +339,9 @@ pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, 
         // If this is the *first* decoded packet, create a sample buffer matching the
         // decoded audio buffer format.
         if sample_buf.is_none() {
-          // Get the audio buffer specification.
           let spec = *buffer.spec();
-
-          // Get the capacity of the decoded buffer. Note: This is capacity, not length!
           let duration = buffer.capacity() as u64;
 
-          // Create the f32 sample buffer.
           sample_buf = Some(SampleBuffer::<i16>::new(duration, spec));
         }
 
@@ -378,7 +349,6 @@ pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, 
         if let Some(buf) = &mut sample_buf {
           buf.copy_interleaved_ref(buffer);
 
-          // The samples may now be access via the `samples()` function.
           sample_count += buf.samples().len();
           // println!("Decoded {} samples", sample_count);
 
@@ -397,79 +367,28 @@ pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, 
             view.set_ssrc(ready.ssrc);
 
             let payload = view.payload_mut();
-            let mut plaintext = Vec::new();
-            // let mut plaintext = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-            // let size = std::cmp::min(plaintext.len(), 1460 - TAG_SIZE - 24);
-            // let size = plaintext.len();
-            plaintext.resize(payload.len() - 24 - TAG_SIZE, 0);
 
-            // println!("samples: {:?}", &buf.samples()[..960 / 4]);
-            // println!("buf: {}", &buf.len());
+            let nonce_bytes = random::<[u8; 24]>();
+            let size = encoder.encode(&samples[..], &mut payload[TAG_SIZE..TAG_SIZE + 1460 - 12 - nonce_bytes.len()])?;
 
-            // &buf.samples()[..960]
-            let size = encoder.encode(&samples[..], &mut plaintext)?;
-            // println!("encoded: {:?}", &plaintext[..size]);
+            payload[TAG_SIZE + size..TAG_SIZE + size + nonce_bytes.len()].copy_from_slice(&nonce_bytes);
+            let tag = cipher.encrypt_in_place_detached(
+              GenericArray::from_slice(&nonce_bytes.to_vec()),
+              b"",
+              &mut payload[TAG_SIZE..TAG_SIZE + size]
+            )?;
+            payload[..TAG_SIZE].copy_from_slice(tag.as_slice());
 
-            // let mut debik = Vec::<i16>::new();
-            // let mut decoded = MutSignals::try_from(&mut debik[..])?;
-            // let decoded_size = opus_decoder.decode(Some(Packet::try_from(&plaintext[..size])?), decoded, false)?;
-            // println!("decoded ({}): {:?}", decoded_size, &debik[..decoded_size]);
-
-            // let mut nonce_bytes = Vec::new();
-            // nonce_bytes.write_i32::<BigEndian>(nonce)?;
-            // nonce_bytes.write_i32::<BigEndian>(0)?;
-            // nonce_bytes.write_i32::<BigEndian>(0)?;
-            // nonce_bytes.write_i32::<BigEndian>(0)?;
-            // nonce_bytes.write_i32::<BigEndian>(0)?;
-            // nonce_bytes.write_i32::<BigEndian>(0)?;
-
-            let mut nonce_bytes = random::<[u8; 24]>();
-
-            let ct = cipher.encrypt(GenericArray::from_slice(&nonce_bytes.to_vec()), &plaintext[..size])?;
-
-            // println!("Payload: {}, plaintext: {}, ct: {}", payload.len(), plaintext.len(), ct.len());
-            let mut enn = Vec::new();
-            {
-              let mut c = Cursor::new(&mut enn);
-              // c.write_all(&plaintext[..size])?;
-              // c.write_all(&tag)?;
-              c.write_all(&ct)?;
-              c.write_all(&nonce_bytes)?;
-              // c.write_i32::<BigEndian>(nonce)?;
-            }
             nonce += 1;
-            // println!("encrypted ({}): {:?}", plaintext[..size].len(), &plaintext[..size]);
-            // println!("enn ({}): {:?}", enn.len(), enn);
 
-            // let decrypted = dcipher.decrypt(GenericArray::from_slice(&nonce_bytes.to_vec()), &enn[..size+TAG_SIZE]).unwrap();
-            // println!("decrypted ({}): {:?}", decrypted.len(), decrypted);
-
-            view.set_payload(&enn[..]);
-
-            // println!("rtp_packet: {}", rtp_packet.len());
-            // println!("rtp_packet: {:?}", rtp_packet);
-
-            // thread::sleep(deadline - Instant::now());
             spin_sleeper.sleep(deadline - Instant::now());
 
-            udp.send(&rtp_packet[..12 + enn.len()]).await?;
+            udp.send(&rtp_packet[..12 + TAG_SIZE + size + nonce_bytes.len()]).await?;
             let mut new_time = Instant::now();
             if new_time - time > Duration::from_millis(1000 / 50) {
               println!("Packet deadline violation: {:?}", new_time - time);
             }
             time = new_time;
-
-            // let select_message = Message::Text(serde_json::to_string(&json!({
-            //   "op": 5,
-            //   "d": {
-            //     "speaking": 1,
-            //     "delay": 0,
-            //     "ssrc": ready.ssrc
-            //   }
-            // })).unwrap());
-            // if let Err(error) = socket.send(select_message).await {
-            //   println!("Error: {:?}", error);
-            // }
           }
         }
       }
