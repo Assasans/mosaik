@@ -21,7 +21,6 @@ twilight-mention = "0.15.1"
 twilight-model = "0.15.1"
 twilight-standby = "0.15.1"
 twilight-util = { version = "0.15.1", features = ["full"] }
-twilight-voice = { path = "../twilight-voice" }
 symphonia = { version = "0.5.2", features = ["all"] }
 tracing-tracy = "0.10.2"
 reqwest = "0.11.16"

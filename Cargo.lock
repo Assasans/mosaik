@@ -1482,6 +1482,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
+name = "spin_sleep"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cafa7900db085f4354dbc7025e25d7a839a14360ea13b5fc4fd717f2d3b23134"
+dependencies = [
+ "once_cell",
+ "winapi",
+]
+
+[[package]]
 name = "subtle"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2148,29 +2158,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "twilight-voice"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "audiopus",
- "discortp",
- "futures",
- "rustls-native-certs",
- "serde_json",
- "simd-json",
- "tokio",
- "tokio-rustls 0.24.0",
- "tokio-tungstenite",
- "tracing",
- "twilight-cache-inmemory",
- "twilight-gateway",
- "twilight-http",
- "twilight-model",
- "xsalsa20poly1305",
-]
-
-[[package]]
 name = "typenum"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2508,6 +2495,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "simd-json",
+ "spin_sleep",
  "symphonia",
  "thiserror",
  "tokio",
@@ -2524,7 +2512,6 @@ dependencies = [
  "twilight-model",
  "twilight-standby",
  "twilight-util",
- "twilight-voice",
  "xsalsa20poly1305",
 ]
 

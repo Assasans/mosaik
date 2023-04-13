@@ -2,7 +2,3 @@
 members = [
   "worker"
 ]
-
-[profile.dev.package]
-# Reduce CPU usage
-songbird = { opt-level = 3 }
