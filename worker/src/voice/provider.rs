@@ -1,20 +1,52 @@
+use rubato::{Resampler, FftFixedIn};
 use symphonia::{
   core::{
     formats::FormatReader,
     codecs::{Decoder, CODEC_TYPE_NULL, DecoderOptions},
-    probe::ProbeResult, audio::SampleBuffer
+    probe::ProbeResult, audio::{SampleBuffer, SignalSpec}
   },
   default::get_codecs
 };
+use tracing::debug;
 
 pub trait SampleProvider: Sync + Send {
-  fn get_samples(&mut self, samples: &mut [i16]) -> usize;
+  fn get_samples(&mut self, samples: &mut [f32]) -> usize;
 }
 
 pub struct SymphoniaSampleProvider {
   format: Box<dyn FormatReader>,
   track_id: u32,
-  decoder: Box<dyn Decoder>
+  decoder: Box<dyn Decoder>,
+  resampler: Option<FftFixedIn<f32>>,
+  spec: Option<SignalSpec>,
+  sample_buf: Option<SampleBuffer<f32>>
+}
+
+fn interleave_to_planar<T>(input: &[T], channels: usize) -> Vec<Vec<T>> where T: Copy + Default {
+  let num_samples = input.len() / channels;
+  let mut output = vec![vec![Default::default(); num_samples]; channels];
+
+  for i in 0..num_samples {
+    for j in 0..channels {
+      output[j][i] = input[i * channels + j];
+    }
+  }
+
+  output
+}
+
+fn planar_to_interleave<T>(input: &[Vec<T>]) -> Vec<T> where T: Copy + Default {
+  let num_channels = input.len();
+  let num_samples = input[0].len();
+  let mut output = vec![Default::default(); num_samples * num_channels];
+
+  for i in 0..num_samples {
+    for j in 0..num_channels {
+      output[i * num_channels + j] = input[j][i];
+    }
+  }
+
+  output
 }
 
 impl SymphoniaSampleProvider {
@@ -34,14 +66,29 @@ impl SymphoniaSampleProvider {
       .make(&track.codec_params, &DecoderOptions::default())
       .expect("unsupported codec");
 
-    SymphoniaSampleProvider { format, track_id, decoder }
+    SymphoniaSampleProvider { format, track_id, decoder, resampler: None, spec: None, sample_buf: None }
+  }
+
+  fn process_samples(&mut self, input: &[f32]) -> Vec<f32> {
+    let spec = self.spec.as_ref().unwrap();
+    if spec.rate == 48000 {
+      return input.to_vec();
+    }
+
+    let resampler = self.resampler.as_mut().unwrap();
+
+    // debug!("Input zeroes: {}", input.iter().filter(|&n| n.abs() < 0.00001).count());
+    let frames_in = interleave_to_planar(input, spec.channels.count());
+    let frames_out = resampler.process(&frames_in, None).unwrap();
+    let output = planar_to_interleave(&frames_out);
+    // debug!("Output zeroes: {}", output.iter().filter(|&n| n.abs() < 0.00001).count());
+
+    return output;
   }
 }
 
 impl SampleProvider for SymphoniaSampleProvider {
-  fn get_samples(&mut self, samples: &mut [i16]) -> usize {
-    let mut sample_buf = None;
-
+  fn get_samples(&mut self, out: &mut [f32]) -> usize {
     loop {
       let packet = match self.format.next_packet() {
         Ok(packet) => packet,
@@ -76,21 +123,30 @@ impl SampleProvider for SymphoniaSampleProvider {
         Ok(buffer) => {
           // If this is the *first* decoded packet, create a sample buffer matching the
           // decoded audio buffer format.
-          if sample_buf.is_none() {
+          if self.sample_buf.is_none() {
             let spec = *buffer.spec();
             let duration = buffer.capacity() as u64;
 
-            sample_buf = Some(SampleBuffer::<i16>::new(duration, spec));
+            self.sample_buf = Some(SampleBuffer::<f32>::new(duration, spec));
+            self.spec = Some(spec);
+            // self.resampler = Some(FftFixedInOut::<f32>::new(spec.rate as usize, 48000, buffer.capacity() / spec.channels.count(), spec.channels.count()).unwrap());
+            self.resampler = Some(FftFixedIn::<f32>::new(spec.rate as usize, 48000, buffer.capacity(), 2, spec.channels.count()).unwrap());
+
+            debug!("Sample rate: {}", spec.rate);
           }
 
           // Copy the decoded audio buffer into the sample buffer in an interleaved format.
-          if let Some(buf) = &mut sample_buf {
+          if let Some(buf) = self.sample_buf.as_mut() {
             buf.copy_interleaved_ref(buffer);
+            // buf.copy_planar_ref(buffer);
 
             // println!("Decoded {} samples", sample_count);
 
-            let size = buf.samples().len();
-            samples[..size].copy_from_slice(buf.samples());
+            let input = buf.samples().to_vec();
+            let output = self.process_samples(&input);
+
+            let size = output.len();
+            out[..size].copy_from_slice(&output);
             return size;
           }
         }

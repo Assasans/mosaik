@@ -290,7 +290,7 @@ impl VoiceConnection {
     })
   }
 
-  pub async fn send_voice_packet(&mut self, input: &[i16]) -> Result<()> {
+  pub async fn send_voice_packet(&mut self, input: &[f32]) -> Result<()> {
     let udp = self.udp.as_mut().context("no voice UDP socket")?;
     let ready = self.ready.as_ref().context("no voice ready packet")?;
     let cipher = self.cipher.as_mut().context("no voice cipher")?;
@@ -311,7 +311,7 @@ impl VoiceConnection {
     let nonce_bytes = random::<[u8; 24]>();
     let nonce = GenericArray::from_slice(&nonce_bytes);
 
-    let size = self.opus_encoder.lock().await.encode(input, &mut payload[TAG_SIZE..TAG_SIZE + rtp_buffer_length - 12 - nonce_bytes.len()])?;
+    let size = self.opus_encoder.lock().await.encode_float(input, &mut payload[TAG_SIZE..TAG_SIZE + rtp_buffer_length - 12 - nonce_bytes.len()])?;
 
     payload[TAG_SIZE + size..TAG_SIZE + size + nonce_bytes.len()].copy_from_slice(&nonce_bytes);
     let tag = cipher.encrypt_in_place_detached(
@@ -363,7 +363,7 @@ impl VoiceConnection {
 
   pub async fn run_loop(me: Arc<RwLock<Self>>) -> Result<()> {
     let packet_size = 1920;
-    let mut samples = [0; 48000];
+    let mut samples = [0f32; 48000];
     let mut got = 0;
 
     let mut time = Instant::now();
@@ -379,6 +379,10 @@ impl VoiceConnection {
         if size == 0 {
           break;
         }
+      }
+
+      if got == 0 {
+        continue;
       }
 
       // debug!("sending {} samples", packet_size);
