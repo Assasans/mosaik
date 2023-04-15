@@ -19,34 +19,43 @@ pub struct SymphoniaSampleProvider {
   decoder: Box<dyn Decoder>,
   resampler: Option<FftFixedIn<f32>>,
   spec: Option<SignalSpec>,
-  sample_buf: Option<SampleBuffer<f32>>
+  sample_buf: Option<SampleBuffer<f32>>,
+  resample_out: Option<Vec<Vec<f32>>>,
+  resample_interleaved_out: Option<Vec<f32>>
 }
 
-fn interleave_to_planar<T>(input: &[T], channels: usize) -> Vec<Vec<T>> where T: Copy + Default {
-  let num_samples = input.len() / channels;
-  let mut output = vec![vec![Default::default(); num_samples]; channels];
+fn planar1d_to_planar2d<T>(input: &[T], channels: usize) -> Vec<&[T]> {
+  let chunk_size = input.len() / channels;
+  let mut result = Vec::with_capacity(channels);
+  for channel in 0..channels {
+    let start = channel * chunk_size;
+    let end = start + chunk_size;
+    result.push(&input[start..end]);
+  }
 
-  for i in 0..num_samples {
+  result
+}
+
+fn interleave_to_planar<T>(input: &[T], output: &mut [Vec<T>], channels: usize) where T: Copy + Default {
+  let samples = input.len() / channels;
+
+  for i in 0..samples {
     for j in 0..channels {
       output[j][i] = input[i * channels + j];
     }
   }
-
-  output
 }
 
-fn planar_to_interleave<T>(input: &[Vec<T>]) -> Vec<T> where T: Copy + Default {
-  let num_channels = input.len();
-  let num_samples = input[0].len();
-  let mut output = vec![Default::default(); num_samples * num_channels];
+fn planar_to_interleave<T, F>(input: &[F], output: &mut [T], frames: usize) -> usize where T: Copy + Default, F: AsRef<[T]> {
+  let channels = input.len();
 
-  for i in 0..num_samples {
-    for j in 0..num_channels {
-      output[i * num_channels + j] = input[j][i];
+  for frame in 0..frames {
+    for channel in 0..channels {
+      let samples = input[channel].as_ref();
+      output[frame * channels + channel] = samples[frame];
     }
   }
-
-  output
+  channels * frames
 }
 
 impl SymphoniaSampleProvider {
@@ -66,7 +75,16 @@ impl SymphoniaSampleProvider {
       .make(&track.codec_params, &DecoderOptions::default())
       .expect("unsupported codec");
 
-    SymphoniaSampleProvider { format, track_id, decoder, resampler: None, spec: None, sample_buf: None }
+    SymphoniaSampleProvider {
+      format,
+      track_id,
+      decoder,
+      resampler: None,
+      spec: None,
+      sample_buf: None,
+      resample_out: None,
+      resample_interleaved_out: None
+    }
   }
 
   fn process_samples(&mut self, input: &[f32]) -> Vec<f32> {
@@ -76,14 +94,19 @@ impl SymphoniaSampleProvider {
     }
 
     let resampler = self.resampler.as_mut().unwrap();
+    let resample_out = self.resample_out.as_mut().unwrap();
+    let output = self.resample_interleaved_out.as_mut().unwrap();
 
     // debug!("Input zeroes: {}", input.iter().filter(|&n| n.abs() < 0.00001).count());
-    let frames_in = interleave_to_planar(input, spec.channels.count());
-    let frames_out = resampler.process(&frames_in, None).unwrap();
-    let output = planar_to_interleave(&frames_out);
+    let frames_in = planar1d_to_planar2d(input, spec.channels.count());
+    let out_size = resampler.output_frames_next();
+    resampler.process_into_buffer(&frames_in, resample_out, None).unwrap();
+    debug!("Resampled {} -> {} samples", input.len(), out_size * spec.channels.count());
+
+    let interleaved_size = planar_to_interleave(&resample_out, output, out_size);
     // debug!("Output zeroes: {}", output.iter().filter(|&n| n.abs() < 0.00001).count());
 
-    return output;
+    return output[..interleaved_size].to_vec();
   }
 }
 
@@ -129,16 +152,21 @@ impl SampleProvider for SymphoniaSampleProvider {
 
             self.sample_buf = Some(SampleBuffer::<f32>::new(duration, spec));
             self.spec = Some(spec);
-            // self.resampler = Some(FftFixedInOut::<f32>::new(spec.rate as usize, 48000, buffer.capacity() / spec.channels.count(), spec.channels.count()).unwrap());
-            self.resampler = Some(FftFixedIn::<f32>::new(spec.rate as usize, 48000, buffer.capacity(), 2, spec.channels.count()).unwrap());
-
-            debug!("Sample rate: {}", spec.rate);
+            let resampler = self.resampler.insert(FftFixedIn::<f32>::new(
+              spec.rate as usize,
+              48000,
+              buffer.capacity(),
+              2,
+              spec.channels.count()
+            ).unwrap());
+            self.resample_out = Some(resampler.output_buffer_allocate());
+            self.resample_interleaved_out = Some(vec![0f32; resampler.output_frames_max() * spec.channels.count()]);
           }
 
           // Copy the decoded audio buffer into the sample buffer in an interleaved format.
           if let Some(buf) = self.sample_buf.as_mut() {
-            buf.copy_interleaved_ref(buffer);
-            // buf.copy_planar_ref(buffer);
+            // buf.copy_interleaved_ref(buffer);
+            buf.copy_planar_ref(buffer);
 
             // println!("Decoded {} samples", sample_count);
 
