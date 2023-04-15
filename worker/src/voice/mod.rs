@@ -13,7 +13,7 @@ use std::{
   sync::Arc,
   time::{Duration, SystemTime, Instant}
 };
-use audiopus::{coder::Encoder, Bitrate, Channels, Application, SampleRate};
+use opus::{Encoder, Bitrate, Channels, Application};
 use anyhow::{Result, anyhow, Context};
 use discortp::{
   MutablePacket,
@@ -117,7 +117,7 @@ impl VoiceConnection {
       udp: None,
       cipher: None,
       cipher_mode: VoiceCipherMode::Suffix,
-      opus_encoder: Mutex::new(Encoder::new(SampleRate::Hz48000, Channels::Stereo, Application::Audio)?),
+      opus_encoder: Mutex::new(Encoder::new(48000, Channels::Stereo, Application::Audio)?),
       sample_provider: None,
 
       hello: None,
@@ -134,7 +134,7 @@ impl VoiceConnection {
 
   pub async fn connect(&mut self, options: VoiceConnectionOptions) -> Result<()> {
     if let Some(bitrate) = options.bitrate {
-      self.opus_encoder.lock().await.set_bitrate(Bitrate::BitsPerSecond(i32::try_from(bitrate)?))?;
+      self.opus_encoder.lock().await.set_bitrate(Bitrate::Bits(i32::try_from(bitrate)?))?;
     }
 
     let (socket, _) = connect_async(format!("wss://{}/?v=4", options.endpoint)).await?;
@@ -432,7 +432,9 @@ pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, 
   //   });
   // }
 
-  let file = File::open("/home/assasans/Downloads/output2.mp3")?;
+  // let file = File::open("/home/assasans/Downloads/output2.mp3")?;
+  let file = File::open("/home/assasans/Downloads/[Hi-Res] Chiisana Boukensha by Aqua, Megumin and Darkness/01 ちいさな冒険者 [ORT].flac")?;
+  // let file = File::open("/home/assasans/Downloads/Алла Пугачёва - Арлекино (minus 2).mp3")?;
   let source = MediaSourceStream::new(Box::new(file), Default::default());
 
   let mut hint = Hint::new();
