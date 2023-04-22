@@ -4,7 +4,7 @@ mod provider;
 mod ws;
 mod udp;
 
-use tokio::sync::{RwLock, Mutex};
+use tokio::{sync::{RwLock, Mutex}, select, time::{interval, Interval}};
 use tracing::*;
 use std::{
   fmt::Debug,
@@ -18,10 +18,9 @@ use opus::{Encoder, Bitrate, Channels, Application};
 use anyhow::{Result, anyhow, Context};
 use discortp::{
   MutablePacket,
-  discord::{IpDiscoveryPacket, MutableIpDiscoveryPacket, IpDiscoveryType, MutableKeepalivePacket},
+  discord::{IpDiscoveryPacket, MutableIpDiscoveryPacket, IpDiscoveryType},
   rtp::{MutableRtpPacket, RtpType}
 };
-use futures_util::{SinkExt, StreamExt};
 use rand::random;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -82,6 +81,7 @@ struct IpDiscoveryResult {
 
 pub struct VoiceConnection {
   ws: Mutex<Option<WebSocketVoiceConnection>>,
+  ws_heartbeat_interval: Mutex<Option<Interval>>,
   udp: Mutex<Option<UdpVoiceConnection>>,
   cipher: Mutex<Option<XSalsa20Poly1305>>,
   cipher_mode: VoiceCipherMode,
@@ -93,6 +93,7 @@ impl VoiceConnection {
   pub fn new() -> Result<Self> {
     Ok(Self {
       ws: Mutex::new(None),
+      ws_heartbeat_interval: Mutex::new(None),
       udp: Mutex::new(None),
       cipher: Mutex::new(None),
       cipher_mode: VoiceCipherMode::Suffix,
@@ -101,7 +102,7 @@ impl VoiceConnection {
     })
   }
 
-  pub async fn connect(&mut self, options: VoiceConnectionOptions) -> Result<()> {
+  pub async fn connect(&self, options: VoiceConnectionOptions) -> Result<()> {
     if let Some(bitrate) = options.bitrate {
       self.opus_encoder.lock().await.set_bitrate(Bitrate::Bits(i32::try_from(bitrate)?))?;
     }
@@ -111,7 +112,10 @@ impl VoiceConnection {
     let mut ws_guard = self.ws.lock().await;
     let ws = ws_guard.as_mut().context("no voice gateway connection")?;
 
+    let hello = ws.hello.as_ref().context("no voice hello packet")?;
     let ready = ws.ready.as_ref().context("no voice ready packet")?;
+
+    *self.ws_heartbeat_interval.lock().await = Some(interval(Duration::from_millis(hello.heartbeat_interval.round() as u64)));
 
     *self.udp.lock().await = Some(UdpVoiceConnection::new(ready).await?);
 
@@ -153,10 +157,10 @@ impl VoiceConnection {
 
     let mut ws_lock = self.ws.lock().await;
     if let Some(ref mut ws) = *ws_lock {
-      ws.socket.close(Some(CloseFrame {
+      ws.close(CloseFrame {
         code: CloseCode::Normal,
         reason: "".into()
-      })).await?;
+      }).await?;
       *ws_lock = None;
     }
 
@@ -195,6 +199,7 @@ impl VoiceConnection {
   }
 
   pub async fn send_voice_packet(&self, ws: &WebSocketVoiceConnection, udp: &mut UdpVoiceConnection, input: &[f32]) -> Result<()> {
+    debug!("send_voice_packet");
     let ready = ws.ready.as_ref().context("no voice ready packet")?;
 
     let cipher_guard = self.cipher.lock().await;
@@ -237,22 +242,56 @@ impl VoiceConnection {
     Ok(())
   }
 
-  pub async fn run_udp_loop(&self) -> Result<()> {
+  pub async fn run_ws_loop(me: Arc<Self>) -> Result<()> {
+    let packets: async_channel::Receiver<GatewayPacket> = {
+      let mut ws_guard = me.ws.lock().await;
+      let ws = ws_guard.as_mut().context("no voice gateway connection")?;
+
+      ws.packets.clone()
+    };
+
+    loop {
+      let mut interval = me.ws_heartbeat_interval.lock().await;
+
+      debug!("heartbeat_interval: {:?}", me.ws_heartbeat_interval);
+      select! {
+        event = packets.recv() => {
+          let event = event?;
+          match TryInto::<GatewayEvent>::try_into(event) {
+            Ok(event) => {
+              debug!("<< {:?}", event);
+            }
+
+            Err(error) => {
+              warn!("Failed to decode event: {}", error);
+            }
+          }
+        },
+
+        _ = async { interval.as_mut().unwrap().tick().await }, if interval.is_some() => {
+          let mut ws_guard = me.ws.lock().await;
+          let ws = ws_guard.as_mut().context("no voice gateway connection")?;
+
+          ws.send_heartbeat().await?;
+        }
+      }
+    }
+  }
+
+  pub async fn run_udp_loop(me: Arc<Self>) -> Result<()> {
     let packet_size = 1920;
     let mut samples = [0f32; 48000];
     let mut got = 0;
 
     let mut time = Instant::now();
     loop {
-      let mut ws_guard = self.ws.lock().await;
+      let mut ws_guard = me.ws.lock().await;
       let ws = ws_guard.as_mut().context("no voice gateway connection")?;
 
-      let mut udp_guard = self.udp.lock().await;
+      let mut udp_guard = me.udp.lock().await;
       let udp = udp_guard.as_mut().context("no voice UDP socket")?;
 
-      let hello = ws.hello.as_ref().context("no voice hello packet")?;
-
-      let mut l = self.sample_provider.lock().await;
+      let mut l = me.sample_provider.lock().await;
       let sample_provider = l.as_mut().context("no sample provider set")?;
 
       while got < packet_size {
@@ -270,7 +309,7 @@ impl VoiceConnection {
       }
 
       // debug!("sending {} samples", packet_size);
-      self.send_voice_packet(ws, udp, &samples[..packet_size]).await?;
+      me.send_voice_packet(ws, udp, &samples[..packet_size]).await?;
       samples.copy_within(packet_size..got, 0);
       got -= packet_size;
 
@@ -279,10 +318,6 @@ impl VoiceConnection {
         warn!("Voice packet deadline exceeded: {:?}", new_time - time);
       }
       time = new_time;
-
-      if Instant::now() >= ws.heartbeat_time + Duration::from_millis(hello.heartbeat_interval.round() as u64) {
-        ws.send_heartbeat().await?;
-      }
 
       if Instant::now() >= udp.heartbeat_time + Duration::from_millis(5000) {
         let ready = ws.ready.as_ref().context("no voice ready packet")?;
@@ -304,11 +339,9 @@ pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, 
     session_id: session_id.to_owned()
   };
 
-  let connection = Arc::new(RwLock::new(VoiceConnection::new()?));
+  let connection = Arc::new(VoiceConnection::new()?);
+  connection.connect(options).await?;
   {
-    let mut connection = connection.write().await;
-    connection.connect(options).await?;
-
     let mut ws_lock = connection.ws.lock().await;
     ws_lock.as_mut().unwrap().send_speaking(true).await?;
   }
@@ -320,8 +353,8 @@ pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, 
   // }
 
   // let file = File::open("/home/assasans/Downloads/output2.mp3")?;
-  let file = File::open("/home/assasans/Downloads/[Hi-Res] Chiisana Boukensha by Aqua, Megumin and Darkness/01 ちいさな冒険者 [ORT].flac")?;
-  // let file = File::open("/home/assasans/Downloads/Алла Пугачёва - Арлекино (minus 2).mp3")?;
+  // let file = File::open("/home/assasans/Downloads/[Hi-Res] Chiisana Boukensha by Aqua, Megumin and Darkness/01 ちいさな冒険者 [ORT].flac")?;
+  let file = File::open("/home/assasans/Downloads/Алла Пугачёва - Арлекино (minus 2).mp3")?;
   let source = MediaSourceStream::new(Box::new(file), Default::default());
 
   let mut hint = Hint::new();
@@ -331,8 +364,17 @@ pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, 
     .format(&hint, source, &FormatOptions::default(), &MetadataOptions::default())
     .expect("unsupported format");
 
-  *connection.write().await.sample_provider.lock().await = Some(Box::new(SymphoniaSampleProvider::new(probed)));
-  VoiceConnection::run_udp_loop(&*connection.write().await).await.unwrap();
+  *connection.sample_provider.lock().await = Some(Box::new(SymphoniaSampleProvider::new(probed)));
+
+  let clone = connection.clone();
+  tokio::spawn(async move {
+    VoiceConnection::run_ws_loop(clone).await.unwrap()
+  });
+
+  let clone = connection.clone();
+  tokio::spawn(async move {
+    VoiceConnection::run_udp_loop(clone).await.unwrap();
+  });
 
   Ok(())
 }

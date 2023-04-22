@@ -1,17 +1,19 @@
-use std::time::{Instant, SystemTime};
-
+use std::{time::{SystemTime, Duration}, sync::Arc};
 use anyhow::{Result, Context, anyhow};
+use async_channel::Receiver;
+use futures::stream::{SplitStream, SplitSink};
 use futures_util::{SinkExt, StreamExt};
-use tokio::net::TcpStream;
-use tokio_tungstenite::{WebSocketStream, MaybeTlsStream, connect_async, tungstenite::Message};
+use tokio::{net::TcpStream, time::{Interval, interval}, sync::Mutex};
+use tokio_tungstenite::{WebSocketStream, MaybeTlsStream, connect_async, tungstenite::{Message, protocol::CloseFrame}};
 use tracing::{debug, warn};
 
 use super::{Hello, Ready, VoiceConnectionOptions, Speaking, GatewayPacket, GatewayEvent, Identify};
 
-#[derive(Debug)]
 pub struct WebSocketVoiceConnection {
-  pub socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
-  pub heartbeat_time: Instant,
+  pub read: Arc<Mutex<Option<SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>>>>,
+  pub write: Arc<Mutex<Option<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>>,
+
+  pub packets: Receiver<GatewayPacket>,
 
   pub hello: Option<Hello>,
   pub ready: Option<Ready>
@@ -22,9 +24,33 @@ impl WebSocketVoiceConnection {
     let (socket, _) = connect_async(format!("wss://{}/?v=4", options.endpoint)).await?;
     debug!("voice gateway connected");
 
+    let (sender, receiver) = async_channel::unbounded();
+    let (write, read) = socket.split();
+
+    let read = Arc::new(Mutex::new(Some(read)));
+
+    let read_weak = Arc::downgrade(&read);
+    tokio::spawn(async move {
+      while let Some(read) = read_weak.upgrade() {
+        let mut lock = read.try_lock().unwrap();
+        match lock.as_mut().unwrap().next().await {
+          Some(message) => {
+            let message = message.unwrap();
+            let json = message.into_text().unwrap();
+            debug!("< {}", json);
+
+            sender.send(serde_json::from_str(&json).unwrap()).await.unwrap();
+          },
+          None => break
+        }
+      }
+    });
+
     let mut me = Self {
-      socket,
-      heartbeat_time: Instant::now(),
+      read: read,
+      write: Arc::new(Mutex::new(Some(write))),
+
+      packets: receiver,
 
       hello: None,
       ready: None
@@ -67,7 +93,7 @@ impl WebSocketVoiceConnection {
     Ok(me)
   }
 
-  pub async fn send_speaking(&mut self, speaking: bool) -> Result<()> {
+  pub async fn send_speaking(&self, speaking: bool) -> Result<()> {
     let ready = self.ready.as_ref().context("no voice ready packet")?;
 
     self.send(GatewayEvent::Speaking(Speaking {
@@ -79,43 +105,39 @@ impl WebSocketVoiceConnection {
     Ok(())
   }
 
-  pub async fn send_heartbeat(&mut self) -> Result<()> {
+  pub async fn send_heartbeat(&self) -> Result<()> {
     let nonce = u64::try_from(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis())?;
+
     self.send(GatewayEvent::Heartbeat(nonce).try_into()?).await?;
-
-    let ack_nonce = {
-      let event: GatewayEvent = self.receive().await?.try_into()?;
-      match event {
-        GatewayEvent::HeartbeatAck(nonce) => nonce,
-        other => {
-          warn!("Expected HeartbeatAck packet, got: {:?}", other);
-          return Err(anyhow!("Invalid packet")); // TODO
-        }
-      }
-    };
-
-    debug!("Sent gateway heartbeat, ack nonce: {}", ack_nonce);
-
-    self.heartbeat_time = Instant::now();
+    debug!("Sent gateway heartbeat");
 
     Ok(())
   }
 
-  pub async fn send(&mut self, packet: GatewayPacket) -> Result<()> {
+  pub async fn send(&self, packet: GatewayPacket) -> Result<()> {
     let json = serde_json::to_string(&packet)?;
     debug!("> {}", json);
 
-    self.socket.send(Message::Text(json)).await?;
-    self.socket.flush().await?;
+    let mut lock = self.write.lock().await;
+    let write = lock.as_mut().unwrap();
+
+    write.send(Message::Text(json)).await?;
+    write.flush().await?;
 
     Ok(())
   }
 
-  pub async fn receive(&mut self) -> Result<GatewayPacket> {
-    let message = self.socket.next().await.context("no next voice gateway message")??;
-    let json = message.into_text()?;
-    debug!("< {}", json);
+  pub async fn receive(&self) -> Result<GatewayPacket> {
+    Ok(self.packets.recv().await?)
+  }
 
-    Ok(serde_json::from_str(&json)?)
+  pub async fn close(&self, frame: CloseFrame<'_>) -> Result<()> {
+    let read = self.read.lock().await.take().unwrap();
+    let write = self.write.lock().await.take().unwrap();
+
+    let mut socket = write.reunite(read)?;
+    socket.close(Some(frame)).await?;
+
+    Ok(())
   }
 }

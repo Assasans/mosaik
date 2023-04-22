@@ -1,5 +1,4 @@
 use std::time::Instant;
-
 use anyhow::Result;
 use discortp::{wrap::{Wrap16, Wrap32}, discord::MutableKeepalivePacket};
 use rand::random;
