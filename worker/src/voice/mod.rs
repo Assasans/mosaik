@@ -199,7 +199,6 @@ impl VoiceConnection {
   }
 
   pub async fn send_voice_packet(&self, ws: &WebSocketVoiceConnection, udp: &mut UdpVoiceConnection, input: &[f32]) -> Result<()> {
-    debug!("send_voice_packet");
     let ready = ws.ready.as_ref().context("no voice ready packet")?;
 
     let cipher_guard = self.cipher.lock().await;
@@ -253,7 +252,6 @@ impl VoiceConnection {
     loop {
       let mut interval = me.ws_heartbeat_interval.lock().await;
 
-      debug!("heartbeat_interval: {:?}", me.ws_heartbeat_interval);
       select! {
         event = packets.recv() => {
           let event = event?;
@@ -280,19 +278,19 @@ impl VoiceConnection {
 
   pub async fn run_udp_loop(me: Arc<Self>) -> Result<()> {
     let packet_size = 1920;
-    let mut samples = [0f32; 48000];
+    let mut samples = [0f32; 48000]; // TODO(Assasans): Calculate buffer size
     let mut got = 0;
 
     let mut time = Instant::now();
-    loop {
-      let mut ws_guard = me.ws.lock().await;
-      let ws = ws_guard.as_mut().context("no voice gateway connection")?;
+    'packet: loop {
+      let mut ws_lock = me.ws.lock().await;
+      let ws = ws_lock.as_mut().context("no voice gateway connection")?;
 
-      let mut udp_guard = me.udp.lock().await;
-      let udp = udp_guard.as_mut().context("no voice UDP socket")?;
+      let mut udp_lock = me.udp.lock().await;
+      let udp = udp_lock.as_mut().context("no voice UDP socket")?;
 
-      let mut l = me.sample_provider.lock().await;
-      let sample_provider = l.as_mut().context("no sample provider set")?;
+      let mut sample_provider_lock = me.sample_provider.lock().await;
+      let sample_provider = sample_provider_lock.as_mut().context("no sample provider set")?;
 
       while got < packet_size {
         let size = sample_provider.get_samples(&mut samples[got..]);
@@ -300,24 +298,22 @@ impl VoiceConnection {
 
         // debug!("got {} samples", size);
         if size == 0 {
-          break;
+          break 'packet;
         }
       }
 
-      if got == 0 {
-        continue;
-      }
+      while got >= packet_size {
+        debug!("sending {} samples", packet_size);
+        me.send_voice_packet(ws, udp, &samples[..packet_size]).await?;
+        samples.copy_within(packet_size..got, 0);
+        got -= packet_size;
 
-      // debug!("sending {} samples", packet_size);
-      me.send_voice_packet(ws, udp, &samples[..packet_size]).await?;
-      samples.copy_within(packet_size..got, 0);
-      got -= packet_size;
-
-      let new_time = Instant::now();
-      if new_time - time > Duration::from_millis(1000 / 50) {
-        warn!("Voice packet deadline exceeded: {:?}", new_time - time);
+        let new_time = Instant::now();
+        if new_time - time > Duration::from_millis(1000 / 50) {
+          warn!("Voice packet deadline exceeded: {:?}", new_time - time);
+        }
+        time = new_time;
       }
-      time = new_time;
 
       if Instant::now() >= udp.heartbeat_time + Duration::from_millis(5000) {
         let ready = ws.ready.as_ref().context("no voice ready packet")?;

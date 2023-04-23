@@ -1,3 +1,4 @@
+use anyhow::Result;
 use rubato::{Resampler, FftFixedIn};
 use symphonia::{
   core::{
@@ -87,15 +88,18 @@ impl SymphoniaSampleProvider {
     }
   }
 
-  fn process_samples(&mut self, input: &[f32]) -> Vec<f32> {
+  fn process_samples(&mut self) -> Result<&[f32]> {
+    let input = self.sample_buf.as_ref().unwrap().samples();
+    let output = self.resample_interleaved_out.as_mut().unwrap();
+
     let spec = self.spec.as_ref().unwrap();
     if spec.rate == 48000 {
-      return input.to_vec();
+      output[..input.len()].copy_from_slice(input);
+      return Ok(&output[..input.len()]);
     }
 
     let resampler = self.resampler.as_mut().unwrap();
     let resample_out = self.resample_out.as_mut().unwrap();
-    let output = self.resample_interleaved_out.as_mut().unwrap();
 
     // debug!("Input zeroes: {}", input.iter().filter(|&n| n.abs() < 0.00001).count());
     let frames_in = planar1d_to_planar2d(input, spec.channels.count());
@@ -106,7 +110,7 @@ impl SymphoniaSampleProvider {
     let interleaved_size = planar_to_interleave(&resample_out, output, out_size);
     // debug!("Output zeroes: {}", output.iter().filter(|&n| n.abs() < 0.00001).count());
 
-    return output[..interleaved_size].to_vec();
+    Ok(&output[..interleaved_size])
   }
 }
 
@@ -170,12 +174,10 @@ impl SampleProvider for SymphoniaSampleProvider {
 
             // println!("Decoded {} samples", sample_count);
 
-            let input = buf.samples().to_vec();
-            let output = self.process_samples(&input);
+            let output = self.process_samples().unwrap();
 
-            let size = output.len();
-            out[..size].copy_from_slice(&output);
-            return size;
+            out[..output.len()].copy_from_slice(&output);
+            return output.len();
           }
         }
         Err(symphonia::core::errors::Error::IoError(_)) => {
