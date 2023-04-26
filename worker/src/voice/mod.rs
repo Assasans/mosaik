@@ -235,8 +235,15 @@ impl VoiceConnection {
 
     spin_sleep::sleep(udp.deadline - Instant::now());
 
+    let offset = Duration::from_micros(50);
+
+    let delta = Instant::now().saturating_duration_since(udp.deadline + offset);
+    if delta > Duration::ZERO {
+      warn!("Voice packet deadline exceeded by {:?}", delta);
+    }
+    udp.deadline = Instant::now() + Duration::from_millis(1000 / 50) - offset;
+
     udp.socket.send(&udp.rtp_buffer[..12 + TAG_SIZE + size + nonce_bytes.len()]).await?;
-    udp.deadline = Instant::now() + Duration::from_millis(1000 / 50 - 1);
 
     Ok(())
   }
@@ -281,7 +288,6 @@ impl VoiceConnection {
     let mut samples = [0f32; 48000]; // TODO(Assasans): Calculate buffer size
     let mut got = 0;
 
-    let mut time = Instant::now();
     'packet: loop {
       let mut ws_lock = me.ws.lock().await;
       let ws = ws_lock.as_mut().context("no voice gateway connection")?;
@@ -303,16 +309,10 @@ impl VoiceConnection {
       }
 
       while got >= packet_size {
-        debug!("sending {} samples", packet_size);
+        // debug!("sending {} samples", packet_size);
         me.send_voice_packet(ws, udp, &samples[..packet_size]).await?;
         samples.copy_within(packet_size..got, 0);
         got -= packet_size;
-
-        let new_time = Instant::now();
-        if new_time - time > Duration::from_millis(1000 / 50) {
-          warn!("Voice packet deadline exceeded: {:?}", new_time - time);
-        }
-        time = new_time;
       }
 
       if Instant::now() >= udp.heartbeat_time + Duration::from_millis(5000) {
@@ -349,12 +349,13 @@ pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, 
   // }
 
   // let file = File::open("/home/assasans/Downloads/output2.mp3")?;
-  // let file = File::open("/home/assasans/Downloads/[Hi-Res] Chiisana Boukensha by Aqua, Megumin and Darkness/01 ちいさな冒険者 [ORT].flac")?;
-  let file = File::open("/home/assasans/Downloads/Алла Пугачёва - Арлекино (minus 2).mp3")?;
+  let file = File::open("/home/assasans/Downloads/[Hi-Res] Chiisana Boukensha by Aqua, Megumin and Darkness/01 ちいさな冒険者 [ORT].flac")?;
+  // let file = File::open("/home/assasans/Downloads/Алла Пугачёва - Арлекино (minus 2).mp3")?;
+  // let file = File::open("/workspaces/mozaik/Чудный лес под солнцем зреет ... [OXmxbaYjcxs].ogg")?;
   let source = MediaSourceStream::new(Box::new(file), Default::default());
 
   let mut hint = Hint::new();
-  hint.with_extension("mp3");
+  hint.with_extension("flac");
 
   let probed = symphonia::default::get_probe()
     .format(&hint, source, &FormatOptions::default(), &MetadataOptions::default())
