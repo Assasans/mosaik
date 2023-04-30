@@ -16,7 +16,6 @@ tracing-subscriber = "0.3.16"
 twilight-cache-inmemory = "0.15.1"
 twilight-gateway = { version = "0.15.1", features = ["simd-json"] }
 twilight-http = { version = "0.15.1", features = ["simd-json"] }
-twilight-interactions = "0.15.1"
 twilight-mention = "0.15.1"
 twilight-model = "0.15.1"
 twilight-standby = "0.15.1"
@@ -35,7 +34,6 @@ xsalsa20poly1305 = { version = "0.9.0", features = ["std"] }
 futures-util = "0.3.28"
 byteorder = "1.4.3"
 rand = "0.8.5"
-opus-mux = "0.1.1"
 spin_sleep = "1.1.1"
 rubato = "0.12.0"
 async-channel = "1.8.0"
