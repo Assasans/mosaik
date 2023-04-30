@@ -7,25 +7,20 @@ pub mod player;
 
 use anyhow::Context;
 use commands::{JoinCommand, CommandHandler, PlayCommand};
-use futures::StreamExt;
 use player::Player;
-use reqwest::Client;
-use symphonia::core::io::{MediaSource, ReadOnlySource};
-use tracing_subscriber::{layer::SubscriberExt, EnvFilter};
+use tracing_subscriber::{layer::SubscriberExt, EnvFilter, util::SubscriberInitExt};
 use twilight_cache_inmemory::InMemoryCache;
 use twilight_util::builder::{command::{StringBuilder, ChannelBuilder}, InteractionResponseDataBuilder};
 
 use std::{collections::HashMap, env, error::Error, future::Future, sync::Arc};
-use tokio::{sync::RwLock, fs::File, io::AsyncReadExt};
+use tokio::sync::RwLock;
 use twilight_gateway::{Shard, Event, Intents, ShardId, MessageSender};
-use twilight_http::{Client as HttpClient, client::InteractionClient};
+use twilight_http::Client as HttpClient;
 use twilight_model::{
   channel::{ChannelType},
   id::{marker::{GuildMarker, ApplicationMarker}, Id}, application::{interaction::InteractionData}, http::interaction::{InteractionResponse, InteractionResponseType}, gateway::payload::outgoing::UpdateVoiceState,
 };
 use twilight_standby::Standby;
-
-use crate::providers::{MediaProvider};
 
 pub type State = Arc<StateRef>;
 
@@ -66,14 +61,17 @@ macro_rules! argument {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-  tracing_subscriber::fmt()
-    .with_max_level(tracing::Level::DEBUG)
-    .with_env_filter(EnvFilter::from_default_env())
-    .init();
-
-  // tracing::subscriber::set_global_default(
-  //   tracing_subscriber::registry().with(tracing_tracy::TracyLayer::new())
-  // ).expect("set up the subscriber");
+  if env::var("MOSAIK_DEBUG_TRACY").map_or(false, |it| it == "1") {
+    tracing_subscriber::registry()
+      .with(tracing_tracy::TracyLayer::new())
+      .with(tracing_subscriber::fmt::Layer::new())
+      .init();
+  } else {
+    tracing_subscriber::fmt()
+      .with_max_level(tracing::Level::DEBUG)
+      .with_env_filter(EnvFilter::from_default_env())
+      .init();
+  }
 
   let (mut shard, state) = {
     let token = env::var("DISCORD_TOKEN")?;
