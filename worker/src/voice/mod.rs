@@ -1,3 +1,4 @@
+mod constants;
 mod opcode;
 mod event;
 mod provider;
@@ -11,7 +12,7 @@ use std::{
   fs::File,
   net::IpAddr,
   str::FromStr,
-  sync::Arc,
+  sync::{Arc, Weak},
   time::{Duration, Instant}
 };
 use opus::{Encoder, Bitrate, Channels, Application};
@@ -36,7 +37,9 @@ use xsalsa20poly1305::{aead::generic_array::GenericArray, TAG_SIZE, XSalsa20Poly
 pub use opcode::*;
 pub use event::*;
 
-use self::{provider::{SampleProvider, SymphoniaSampleProvider}, ws::WebSocketVoiceConnection, udp::UdpVoiceConnection};
+use crate::{state_flow::StateFlow, voice::constants::{TIMESTAMP_STEP, CHUNK_DURATION}};
+
+use self::{provider::{SampleProvider, SymphoniaSampleProvider}, ws::WebSocketVoiceConnection, udp::UdpVoiceConnection, constants::{SAMPLE_RATE, CHANNEL_COUNT}};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GatewayPacket {
@@ -79,14 +82,21 @@ struct IpDiscoveryResult {
   pub port: u16
 }
 
+pub enum VoiceConnectionState {
+  Disconnected,
+  Connected,
+  Playing
+}
+
 pub struct VoiceConnection {
-  ws: Mutex<Option<WebSocketVoiceConnection>>,
+  pub ws: Mutex<Option<WebSocketVoiceConnection>>,
   ws_heartbeat_interval: Mutex<Option<Interval>>,
-  udp: Mutex<Option<UdpVoiceConnection>>,
+  pub udp: Mutex<Option<UdpVoiceConnection>>,
   cipher: Mutex<Option<XSalsa20Poly1305>>,
   cipher_mode: VoiceCipherMode,
   opus_encoder: Mutex<Encoder>,
-  sample_provider: Mutex<Option<Box<dyn SampleProvider>>>
+  pub sample_provider: Mutex<Option<Box<dyn SampleProvider>>>,
+  pub state: StateFlow<VoiceConnectionState>
 }
 
 impl VoiceConnection {
@@ -98,7 +108,8 @@ impl VoiceConnection {
       cipher: Mutex::new(None),
       cipher_mode: VoiceCipherMode::Suffix,
       opus_encoder: Mutex::new(Encoder::new(48000, Channels::Stereo, Application::Audio)?),
-      sample_provider: Mutex::new(None)
+      sample_provider: Mutex::new(None),
+      state: StateFlow::new(VoiceConnectionState::Disconnected)
     })
   }
 
@@ -149,10 +160,13 @@ impl VoiceConnection {
     let key = Key::from_slice(&session_description.secret_key);
     *self.cipher.lock().await = Some(XSalsa20Poly1305::new(&key));
 
+    self.state.set(VoiceConnectionState::Connected).await?;
+
     Ok(())
   }
 
   pub async fn disconnect(&self) -> Result<()> {
+    self.state.set(VoiceConnectionState::Disconnected).await?;
     *self.udp.lock().await = None;
 
     let mut ws_lock = self.ws.lock().await;
@@ -213,7 +227,7 @@ impl VoiceConnection {
     udp.sequence += 1;
 
     view.set_timestamp(udp.timestamp);
-    udp.timestamp += 48000 / 50;
+    udp.timestamp += TIMESTAMP_STEP as u32;
 
     view.set_ssrc(ready.ssrc);
 
@@ -234,29 +248,28 @@ impl VoiceConnection {
     payload[..TAG_SIZE].copy_from_slice(tag.as_slice());
 
     spin_sleep::sleep(udp.deadline - Instant::now());
+    let delta = Instant::now().saturating_duration_since(udp.deadline);
+    udp.deadline = Instant::now() + CHUNK_DURATION;
 
-    let offset = Duration::from_micros(50);
-
-    let delta = Instant::now().saturating_duration_since(udp.deadline + offset);
-    if delta > Duration::ZERO {
+    if delta > CHUNK_DURATION {
       warn!("Voice packet deadline exceeded by {:?}", delta);
     }
-    udp.deadline = Instant::now() + Duration::from_millis(1000 / 50) - offset;
 
     udp.socket.send(&udp.rtp_buffer[..12 + TAG_SIZE + size + nonce_bytes.len()]).await?;
 
     Ok(())
   }
 
-  pub async fn run_ws_loop(me: Arc<Self>) -> Result<()> {
-    let packets: async_channel::Receiver<GatewayPacket> = {
+  pub async fn run_ws_loop(me: Weak<Self>) -> Result<()> {
+    let packets = {
+      let me = me.upgrade().context("voice connection dropped")?;
       let mut ws_guard = me.ws.lock().await;
       let ws = ws_guard.as_mut().context("no voice gateway connection")?;
 
       ws.packets.clone()
     };
 
-    loop {
+    while let Some(me) = me.upgrade() {
       let mut interval = me.ws_heartbeat_interval.lock().await;
 
       select! {
@@ -281,13 +294,16 @@ impl VoiceConnection {
         }
       }
     }
+
+    Ok(())
   }
 
   pub async fn run_udp_loop(me: Arc<Self>) -> Result<()> {
-    let packet_size = 1920;
-    let mut samples = [0f32; 48000]; // TODO(Assasans): Calculate buffer size
+    let packet_size = TIMESTAMP_STEP * CHANNEL_COUNT;
+    let mut samples = [0f32; SAMPLE_RATE]; // TODO(Assasans): Calculate buffer size
     let mut got = 0;
 
+    me.state.set(VoiceConnectionState::Playing).await?;
     'packet: loop {
       let mut ws_lock = me.ws.lock().await;
       let ws = ws_lock.as_mut().context("no voice gateway connection")?;
@@ -321,8 +337,26 @@ impl VoiceConnection {
       }
     }
 
+    me.state.set(VoiceConnectionState::Connected).await?;
     Ok(())
   }
+}
+
+pub async fn create_sample_provider() -> Result<SymphoniaSampleProvider> {
+  // let file = File::open("/home/assasans/Downloads/output2.mp3")?;
+  let file = File::open("/home/assasans/Downloads/[Hi-Res] Chiisana Boukensha by Aqua, Megumin and Darkness/01 ちいさな冒険者 [ORT].flac")?;
+  // let file = File::open("/home/assasans/Downloads/Алла Пугачёва - Арлекино (minus 2).mp3")?;
+  // let file = File::open("/workspaces/mozaik/Чудный лес под солнцем зреет ... [OXmxbaYjcxs].ogg")?;
+  let source = MediaSourceStream::new(Box::new(file), Default::default());
+
+  let mut hint = Hint::new();
+  hint.with_extension("flac");
+
+  let probed = symphonia::default::get_probe()
+    .format(&hint, source, &FormatOptions::default(), &MetadataOptions::default())
+    .expect("unsupported format");
+
+  Ok(SymphoniaSampleProvider::new(probed))
 }
 
 pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, session_id: &str, token: &str) -> Result<()> {
@@ -348,22 +382,9 @@ pub async fn connect_voice_gateway(endpoint: &str, guild_id: u64, user_id: u64, 
   //   });
   // }
 
-  // let file = File::open("/home/assasans/Downloads/output2.mp3")?;
-  let file = File::open("/home/assasans/Downloads/[Hi-Res] Chiisana Boukensha by Aqua, Megumin and Darkness/01 ちいさな冒険者 [ORT].flac")?;
-  // let file = File::open("/home/assasans/Downloads/Алла Пугачёва - Арлекино (minus 2).mp3")?;
-  // let file = File::open("/workspaces/mozaik/Чудный лес под солнцем зреет ... [OXmxbaYjcxs].ogg")?;
-  let source = MediaSourceStream::new(Box::new(file), Default::default());
+  *connection.sample_provider.lock().await = Some(Box::new(create_sample_provider().await?));
 
-  let mut hint = Hint::new();
-  hint.with_extension("flac");
-
-  let probed = symphonia::default::get_probe()
-    .format(&hint, source, &FormatOptions::default(), &MetadataOptions::default())
-    .expect("unsupported format");
-
-  *connection.sample_provider.lock().await = Some(Box::new(SymphoniaSampleProvider::new(probed)));
-
-  let clone = connection.clone();
+  let clone = Arc::downgrade(&connection);
   tokio::spawn(async move {
     VoiceConnection::run_ws_loop(clone).await.unwrap()
   });

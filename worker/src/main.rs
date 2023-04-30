@@ -1,4 +1,5 @@
 pub mod util;
+pub mod state_flow;
 pub mod commands;
 pub mod providers;
 pub mod voice;
@@ -28,7 +29,6 @@ use crate::providers::{MediaProvider};
 
 pub type State = Arc<StateRef>;
 
-#[derive(Debug)]
 pub struct StateRef {
   sender: MessageSender,
   http: HttpClient,
