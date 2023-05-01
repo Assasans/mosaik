@@ -1,7 +1,9 @@
 [workspace]
 members = [
+  "utils",
+  "voice",
   "worker"
 ]
 
 [profile.dev]
-opt-level = 1
+# opt-level = 1

@@ -1,5 +1,4 @@
 use std::net::IpAddr;
-
 use anyhow::{Result, Context};
 use serde::{Serialize, Deserialize};
 

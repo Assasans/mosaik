@@ -1,10 +1,8 @@
 use anyhow::{Result, Context};
 use async_trait::async_trait;
-use futures::StreamExt;
-use twilight_gateway::{EventType, Event};
 use twilight_model::{gateway::payload::{incoming::InteractionCreate, outgoing::UpdateVoiceState}, application::interaction::{application_command::CommandOptionValue, InteractionData}};
 
-use crate::{try_unpack, State, interaction_response, get_option_as, player::Player, reply, update_reply, voice::connect_voice_gateway};
+use crate::{try_unpack, State, interaction_response, get_option_as, player::Player, reply, update_reply};
 
 use super::CommandHandler;
 

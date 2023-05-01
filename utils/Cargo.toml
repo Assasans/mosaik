@@ -1,0 +1,8 @@
+[package]
+name = "utils"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.71"
+tokio = { version = "1.27.0", features = ["sync"] }

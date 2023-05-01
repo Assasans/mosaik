@@ -3,13 +3,14 @@ pub mod track;
 use std::sync::Arc;
 
 use anyhow::{Result, Context};
-use futures::StreamExt;
+use futures_util::StreamExt;
+use symphonia::core::probe::Hint;
 use tracing::debug;
 use twilight_gateway::{Event, EventType};
 use twilight_model::{id::{Id, marker::{GuildMarker, ChannelMarker}}, gateway::payload::outgoing::UpdateVoiceState};
 
-use crate::{State, voice::{VoiceConnectionOptions, VoiceConnection, create_sample_provider}};
-
+use voice::{VoiceConnectionOptions, VoiceConnection};
+use crate::{State, voice::SymphoniaSampleProvider};
 use self::track::Track;
 
 #[derive(Debug)]
@@ -116,7 +117,11 @@ impl Player {
       ws_lock.as_mut().unwrap().send_speaking(true).await?;
     }
 
-    *connection.sample_provider.lock().await = Some(Box::new(create_sample_provider().await?));
+    let file = std::fs::File::open("/home/assasans/Downloads/[Hi-Res] Chiisana Boukensha by Aqua, Megumin and Darkness/01 ちいさな冒険者 [ORT].flac")?;
+    let mut hint = Hint::new();
+    hint.with_extension("flac");
+
+    *connection.sample_provider.lock().await = Some(Box::new(SymphoniaSampleProvider::new_from_source(Box::new(file), hint)?));
 
     let clone = connection.clone();
     tokio::spawn(async move {

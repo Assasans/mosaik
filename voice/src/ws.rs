@@ -1,9 +1,8 @@
-use std::{time::{SystemTime, Duration}, sync::Arc};
+use std::{time::SystemTime, sync::Arc};
 use anyhow::{Result, Context, anyhow};
 use async_channel::Receiver;
-use futures::stream::{SplitStream, SplitSink};
-use futures_util::{SinkExt, StreamExt};
-use tokio::{net::TcpStream, time::{Interval, interval}, sync::Mutex};
+use futures_util::{stream::{SplitStream, SplitSink}, SinkExt, StreamExt};
+use tokio::{net::TcpStream, sync::Mutex};
 use tokio_tungstenite::{WebSocketStream, MaybeTlsStream, connect_async, tungstenite::{Message, protocol::CloseFrame}};
 use tracing::{debug, warn};
 
