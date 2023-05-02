@@ -1,7 +1,5 @@
-mod join;
 mod play;
 
-pub use join::*;
 pub use play::*;
 
 use anyhow::Result;

@@ -47,6 +47,7 @@ fn planar_to_interleave<T, F>(input: &[F], output: &mut [T], frames: usize) -> u
 }
 
 impl SymphoniaSampleProvider {
+  /// Creates new [`SymphoniaSampleProvider`] from [`MediaSource`] and [`Hint`]
   pub fn new_from_source(source: Box<dyn MediaSource>, hint: Hint) -> Result<Self> {
     let stream = MediaSourceStream::new(source, Default::default());
     let probed = symphonia::default::get_probe()
@@ -56,6 +57,7 @@ impl SymphoniaSampleProvider {
     Ok(SymphoniaSampleProvider::new(probed))
   }
 
+  /// Creates new [`SymphoniaSampleProvider`] from [`ProbeResult`]
   pub fn new(probed: ProbeResult) -> Self {
     let format = probed.format;
 

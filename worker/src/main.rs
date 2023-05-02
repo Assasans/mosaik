@@ -5,7 +5,7 @@ pub mod voice;
 pub mod player;
 
 use anyhow::Context;
-use commands::{JoinCommand, CommandHandler, PlayCommand};
+use commands::{CommandHandler, PlayCommand};
 use player::Player;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, util::SubscriberInitExt};
 use twilight_cache_inmemory::InMemoryCache;
@@ -83,26 +83,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
 
     interactions
       .create_guild_command(Id::<GuildMarker>::new(686219466824089640))
-      .chat_input("join", "Join channel")?
-      .description_localizations(&localizations! {
-        "ru" => "Зайти в канал"
-      })?
-      .command_options(&[
-        argument!(
-          ChannelBuilder,
-          "channel",
-          "Channel to join",
-          required(false),
-          description_localizations(&localizations! {
-            "ru" => "Канал для входа"
-          }),
-          channel_types([ChannelType::GuildVoice, ChannelType::GuildStageVoice])
-        )
-      ])?
-      .await?;
-
-    interactions
-      .create_guild_command(Id::<GuildMarker>::new(686219466824089640))
       .chat_input("play", "Play a track")?
       .description_localizations(&localizations! {
         "ru" => "Включить трек"
@@ -139,7 +119,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
   };
 
   let handlers: &mut HashMap<&'static str, Box<dyn CommandHandler>> = Box::leak(Box::new(HashMap::from([ // TODO(Assasans): Memory leak
-    ("join", Box::new(JoinCommand {}) as Box<dyn CommandHandler>),
     ("play", Box::new(PlayCommand {}) as Box<dyn CommandHandler>)
   ])));
 

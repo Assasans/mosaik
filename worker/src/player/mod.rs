@@ -111,23 +111,6 @@ impl Player {
       VoiceConnection::run_ws_loop(connection_weak).await.unwrap()
     });
 
-    // TODO(Assasans): Internal code
-    {
-      let mut ws_lock = connection.ws.lock().await;
-      ws_lock.as_mut().unwrap().send_speaking(true).await?;
-    }
-
-    let file = std::fs::File::open("/home/assasans/Downloads/[Hi-Res] Chiisana Boukensha by Aqua, Megumin and Darkness/01 ちいさな冒険者 [ORT].flac")?;
-    let mut hint = Hint::new();
-    hint.with_extension("flac");
-
-    *connection.sample_provider.lock().await = Some(Box::new(SymphoniaSampleProvider::new_from_source(Box::new(file), hint)?));
-
-    let clone = connection.clone();
-    tokio::spawn(async move {
-      VoiceConnection::run_udp_loop(clone).await.unwrap();
-    });
-
     self.connection = Some(connection);
 
     Ok(())
