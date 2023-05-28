@@ -1,3 +1,4 @@
+use std::fmt::{Debug, Formatter};
 use anyhow::Result;
 use rubato::{Resampler, FftFixedIn};
 use symphonia::core::{
@@ -8,6 +9,7 @@ use symphonia::core::{
   meta::MetadataOptions,
   io::{MediaSourceStream, MediaSource}
 };
+use tracing::info;
 
 use voice::provider::SampleProvider;
 
@@ -20,6 +22,13 @@ pub struct SymphoniaSampleProvider {
   sample_buf: Option<SampleBuffer<f32>>,
   resample_out: Option<Vec<Vec<f32>>>,
   resample_interleaved_out: Option<Vec<f32>>
+}
+
+impl Debug for SymphoniaSampleProvider {
+  fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+    formatter.debug_struct("SymphoniaSampleProvider")
+      .finish()
+  }
 }
 
 fn planar1d_to_planar2d<T>(input: &[T], channels: usize) -> Vec<&[T]> {
@@ -126,7 +135,7 @@ impl SampleProvider for SymphoniaSampleProvider {
           unimplemented!();
         }
         Err(err) => {
-          // A unrecoverable error occured, halt decoding.
+          // A unrecoverable error occurred, halt decoding.
           panic!("{}", err);
         }
       };
@@ -188,7 +197,7 @@ impl SampleProvider for SymphoniaSampleProvider {
           return 0;
         }
         Err(err) => {
-          // An unrecoverable error occured, halt decoding.
+          // An unrecoverable error occurred, halt decoding.
           panic!("{}", err);
         }
       }

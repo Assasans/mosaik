@@ -5,5 +5,5 @@ members = [
   "worker"
 ]
 
-[profile.dev]
-# opt-level = 1
+[profile.dev.package.voice]
+opt-level = 1

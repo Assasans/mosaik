@@ -6,6 +6,7 @@ use twilight_model::{gateway::payload::{incoming::InteractionCreate, outgoing::U
 use voice::VoiceConnection;
 
 use crate::{try_unpack, State, interaction_response, get_option_as, player::Player, reply, update_reply, providers::{FileMediaProvider, MediaProvider}};
+use crate::providers::SeekableHttpMediaProvider;
 
 use super::CommandHandler;
 
@@ -48,8 +49,9 @@ impl CommandHandler for PlayCommand {
     }
 
     let (provider, input) = source.split_once(':').context("invalid source")?;
-    let provider = match provider {
-      "file" => FileMediaProvider::new(Path::new(input)),
+    let provider: Box<dyn MediaProvider> = match provider {
+      "file" => Box::new(FileMediaProvider::new(Path::new(input))),
+      "http_seek" => Box::new(SeekableHttpMediaProvider::new(input.to_owned())),
       _ => todo!("media provider {} is not implemented", provider)
     };
 

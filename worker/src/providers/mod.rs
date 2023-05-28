@@ -1,8 +1,11 @@
 mod metadata;
 mod file;
+mod http;
+pub mod async_adapter;
 
 pub use metadata::*;
 pub use file::*;
+pub use http::*;
 
 use std::fmt::Debug;
 use anyhow::Result;

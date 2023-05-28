@@ -1,3 +1,6 @@
+# JetBrains IDEs
+/.idea
+
 # Build artifacts
 /target
 
