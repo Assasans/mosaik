@@ -8,6 +8,7 @@ pub mod udp;
 use tokio::{sync::Mutex, select, time::{interval, Interval}};
 use tracing::*;
 use std::{
+  io,
   fmt::Debug,
   net::IpAddr,
   str::FromStr,
@@ -19,7 +20,8 @@ use anyhow::{Result, anyhow, Context};
 use discortp::{
   MutablePacket,
   discord::{IpDiscoveryPacket, MutableIpDiscoveryPacket, IpDiscoveryType},
-  rtp::{MutableRtpPacket, RtpType}
+  rtp::{MutableRtpPacket, RtpType},
+  rtcp::report::{MutableReceiverReportPacket, ReportBlockPacket}
 };
 use rand::random;
 use ringbuf::HeapRb;
@@ -210,6 +212,38 @@ impl VoiceConnection {
     })
   }
 
+  pub async fn recv_rtcp_stats(&self, udp: &mut UdpVoiceConnection) -> Result<()> {
+    let mut buffer = [0; 4096];
+    let (length, _address) = match udp.socket.try_recv_from(&mut buffer) {
+      Ok((length, address)) => (length, address),
+      Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+      Err(error) => return Err(anyhow::anyhow!(error))
+    };
+
+    let mut nonce_bytes = [0; 24];
+    nonce_bytes.copy_from_slice(&buffer[length - 24..length]);
+    let nonce = GenericArray::from_slice(&nonce_bytes);
+
+    let mut view = MutableReceiverReportPacket::new(&mut buffer[..length - 24]).unwrap();
+
+    let mut tag_bytes = [0; TAG_SIZE];
+    tag_bytes.copy_from_slice(&view.payload_mut()[..TAG_SIZE]);
+    let tag = GenericArray::from_slice(&tag_bytes);
+
+    let cipher_guard = self.cipher.lock().await;
+    let cipher = cipher_guard.as_ref().context("no voice cipher")?;
+
+    let data = &mut view.payload_mut()[TAG_SIZE..];
+
+    cipher.decrypt_in_place_detached(nonce, b"", data, tag).unwrap();
+
+    // TODO(Assasans): Support view.rx_report_count != 1
+    let report = ReportBlockPacket::new(data).unwrap();
+    debug!("{report:?}");
+
+    Ok(())
+  }
+
   pub async fn send_voice_packet(&self, ready: &Ready, udp: &mut UdpVoiceConnection, input: &[f32]) -> Result<()> {
     let cipher_guard = self.cipher.lock().await;
     let cipher = cipher_guard.as_ref().context("no voice cipher")?;
@@ -382,6 +416,7 @@ impl VoiceConnection {
         }
 
         me.send_voice_packet(&ready, udp, &data).await?;
+        me.recv_rtcp_stats(udp).await?;
         // samples.copy_within(packet_size..got, 0);
         // got -= packet_size;
 
