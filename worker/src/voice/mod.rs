@@ -55,6 +55,10 @@ fn planar_to_interleave<T, F>(input: &[F], output: &mut [T], frames: usize) -> u
   channels * frames
 }
 
+fn vectors_to_slices<T>(vectors: &[Vec<T>]) -> Vec<&[T]> {
+  vectors.iter().map(Vec::as_slice).collect()
+}
+
 impl SymphoniaSampleProvider {
   /// Creates new [`SymphoniaSampleProvider`] from [`MediaSource`] and [`Hint`]
   pub fn new_from_source(source: Box<dyn MediaSource>, hint: Hint) -> Result<Self> {
@@ -102,20 +106,22 @@ impl SymphoniaSampleProvider {
     // debug!("Input zeroes: {}", input.iter().filter(|&n| n.abs() < 0.00001).count());
 
     let spec = self.spec.as_ref().unwrap();
-    if spec.rate == 48000 {
-      output[..input.len()].copy_from_slice(input);
-      return Ok(&output[..input.len()]);
-    }
 
     let resampler = self.resampler.as_mut().unwrap();
     let resample_out = self.resample_out.as_mut().unwrap();
 
     let frames_in = planar1d_to_planar2d(input, spec.channels.count());
-    let out_size = resampler.output_frames_next();
-    resampler.process_into_buffer(&frames_in, resample_out, None).unwrap();
-    // debug!("Resampled {} -> {} samples", input.len(), out_size * spec.channels.count());
+    let (planar, planar_size) = if spec.rate != 48000 {
+      let out_size = resampler.output_frames_next();
+      resampler.process_into_buffer(&frames_in, resample_out, None).unwrap();
+      // debug!("Resampled {} -> {} samples", input.len(), out_size * spec.channels.count());
+      (vectors_to_slices(resample_out), out_size)
+    } else {
+      // Native sample rate, no need to resample
+      (frames_in, input.len() / spec.channels.count())
+    };
+    let interleaved_size = planar_to_interleave(&planar, output, planar_size);
 
-    let interleaved_size = planar_to_interleave(&resample_out, output, out_size);
     // debug!("Output zeroes: {}", output.iter().filter(|&n| n.abs() < 0.00001).count());
 
     Ok(&output[..interleaved_size])
