@@ -306,6 +306,7 @@ impl VoiceConnection {
     let packet_size = TIMESTAMP_STEP * CHANNEL_COUNT;
     let buffer = HeapRb::<f32>::new(SAMPLE_RATE * 2); // TODO(Assasans): Calculate buffer size
     let (mut producer, mut consumer) = buffer.split();
+    let (stx, srx) = flume::bounded(0);
     let (tx, rx) = flume::bounded(0);
     let (dtx, drx) = flume::bounded(0);
 
@@ -324,6 +325,11 @@ impl VoiceConnection {
       let sample_provider = sample_provider_lock.as_mut().context("no sample provider set").unwrap();
 
       'packet: loop {
+        if producer.len() >= producer.capacity() / 2 {
+          // Ready to play, filled
+          _ = stx.try_send(());
+        }
+
         if producer.free_len() < data.len() {
           // warn!("sample buffer filled, blocking...");
           drx.recv().unwrap();
@@ -345,7 +351,17 @@ impl VoiceConnection {
       }
     });
 
+    debug!("waiting for jitter buffer to fill halfway");
+    srx.recv_async().await?;
+    debug!("jitter buffer filled halfway");
+
     me.state.set(VoiceConnectionState::Playing).await?;
+
+    {
+      let mut udp_lock = me.udp.lock().await;
+      let udp = udp_lock.as_mut().context("no voice UDP socket")?;
+      udp.deadline = Instant::now();
+    }
     'packet: loop {
       if consumer.len() < packet_size {
         warn!("sample buffer drained, waiting... {} / {}", consumer.len(), packet_size);
