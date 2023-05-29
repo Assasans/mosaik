@@ -23,6 +23,7 @@ use discortp::{
   rtp::{MutableRtpPacket, RtpType},
   rtcp::report::{MutableReceiverReportPacket, ReportBlockPacket}
 };
+use flume::RecvError;
 use rand::random;
 use ringbuf::HeapRb;
 use serde::{Deserialize, Serialize};
@@ -399,7 +400,11 @@ impl VoiceConnection {
     'packet: loop {
       if consumer.len() < packet_size {
         warn!("sample buffer drained, waiting... {} / {}", consumer.len(), packet_size);
-        rx.recv_async().await.unwrap();
+        match rx.recv_async().await {
+          Ok(()) => {},
+          Err(error) if error == RecvError::Disconnected => break,
+          Err(error) => return Err(anyhow::anyhow!(error))
+        };
       }
 
       while consumer.len() >= packet_size {
@@ -426,6 +431,7 @@ impl VoiceConnection {
       }
     }
 
+    debug!("play loop finished");
     me.state.set(VoiceConnectionState::Connected).await?;
     Ok(())
   }

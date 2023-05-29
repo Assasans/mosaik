@@ -1,4 +1,5 @@
 use std::fmt::{Debug, Formatter};
+use std::io;
 use anyhow::Result;
 use rubato::{Resampler, FftFixedIn};
 use symphonia::core::{
@@ -9,7 +10,8 @@ use symphonia::core::{
   meta::MetadataOptions,
   io::{MediaSourceStream, MediaSource}
 };
-use tracing::info;
+use tracing::field::debug;
+use tracing::{debug, error, info};
 
 use voice::provider::SampleProvider;
 
@@ -112,6 +114,13 @@ impl SymphoniaSampleProvider {
 
     let frames_in = planar1d_to_planar2d(input, spec.channels.count());
     let (planar, planar_size) = if spec.rate != 48000 {
+      let missing = resampler.input_frames_next() - input.len() / spec.channels.count();
+      if missing > 0 {
+        // TODO(Assasans): Wait from next packet?
+        error!("missing {} samples", missing);
+        return Ok(&output[0..0]);
+      }
+
       let out_size = resampler.output_frames_next();
       resampler.process_into_buffer(&frames_in, resample_out, None).unwrap();
       // debug!("Resampled {} -> {} samples", input.len(), out_size * spec.channels.count());
@@ -133,13 +142,16 @@ impl SampleProvider for SymphoniaSampleProvider {
     loop {
       let packet = match self.format.next_packet() {
         Ok(packet) => packet,
+        Err(symphonia::core::errors::Error::IoError(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
+          return 0;
+        },
         Err(symphonia::core::errors::Error::ResetRequired) => {
           // The track list has been changed. Re-examine it and create a new set of decoders,
           // then restart the decode loop. This is an advanced feature and it is not
           // unreasonable to consider this "the end." As of v0.5.0, the only usage of this is
           // for chained OGG physical streams.
           unimplemented!();
-        }
+        },
         Err(err) => {
           // A unrecoverable error occurred, halt decoding.
           panic!("{}", err);
