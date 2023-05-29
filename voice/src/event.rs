@@ -4,7 +4,7 @@ use serde::{Serialize, Deserialize};
 
 use super::{opcode::GatewayOpcode, GatewayPacket};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum GatewayEvent {
   Identify(Identify),
   SelectProtocol(SelectProtocol),
@@ -16,7 +16,7 @@ pub enum GatewayEvent {
   Hello(Hello)
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Identify {
   pub server_id: u64,
   pub user_id: u64,
@@ -24,20 +24,20 @@ pub struct Identify {
   pub token: String
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SelectProtocol {
   pub protocol: String,
   pub data: SelectProtocolData
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SelectProtocolData {
   pub address: IpAddr,
   pub port: u16,
   pub mode: String
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Ready {
   pub ssrc: u32,
   pub ip: String,
@@ -45,20 +45,20 @@ pub struct Ready {
   pub modes: Vec<String>
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionDescription {
   pub mode: String,
   pub secret_key: Vec<u8>
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Speaking {
   pub speaking: u8,
   pub delay: u32,
   pub ssrc: u32
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Hello {
   pub heartbeat_interval: f32
 }

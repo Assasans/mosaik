@@ -22,6 +22,7 @@ use discortp::{
   rtp::{MutableRtpPacket, RtpType}
 };
 use rand::random;
+use ringbuf::HeapRb;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_tungstenite::{tungstenite::protocol::{CloseFrame, frame::coding::CloseCode}};
@@ -209,9 +210,7 @@ impl VoiceConnection {
     })
   }
 
-  pub async fn send_voice_packet(&self, ws: &WebSocketVoiceConnection, udp: &mut UdpVoiceConnection, input: &[f32]) -> Result<()> {
-    let ready = ws.ready.as_ref().context("no voice ready packet")?;
-
+  pub async fn send_voice_packet(&self, ready: &Ready, udp: &mut UdpVoiceConnection, input: &[f32]) -> Result<()> {
     let cipher_guard = self.cipher.lock().await;
     let cipher = cipher_guard.as_ref().context("no voice cipher")?;
 
@@ -305,40 +304,74 @@ impl VoiceConnection {
 
   pub async fn run_udp_loop(me: Arc<Self>) -> Result<()> {
     let packet_size = TIMESTAMP_STEP * CHANNEL_COUNT;
-    let mut samples = [0f32; SAMPLE_RATE]; // TODO(Assasans): Calculate buffer size
-    let mut got = 0;
+    let buffer = HeapRb::<f32>::new(SAMPLE_RATE * 2); // TODO(Assasans): Calculate buffer size
+    let (mut producer, mut consumer) = buffer.split();
+    let (tx, rx) = flume::bounded(0);
+    let (dtx, drx) = flume::bounded(0);
 
-    me.state.set(VoiceConnectionState::Playing).await?;
-    'packet: loop {
+    let clone = me.clone();
+
+    let ready = {
       let mut ws_lock = me.ws.lock().await;
       let ws = ws_lock.as_mut().context("no voice gateway connection")?;
+      ws.ready.clone().context("no voice ready packet")?
+    };
 
-      let mut udp_lock = me.udp.lock().await;
-      let udp = udp_lock.as_mut().context("no voice UDP socket")?;
+    tokio::task::spawn_blocking(move || {
+      let mut data = vec![0f32; packet_size * 6];
 
-      let mut sample_provider_lock = me.sample_provider.lock().await;
-      let sample_provider = sample_provider_lock.as_mut().context("no sample provider set")?;
+      let mut sample_provider_lock = clone.sample_provider.blocking_lock();
+      let sample_provider = sample_provider_lock.as_mut().context("no sample provider set").unwrap();
 
-      while got < packet_size {
-        let size = sample_provider.get_samples(&mut samples[got..]);
-        got += size;
+      'packet: loop {
+        if producer.free_len() < data.len() {
+          // warn!("sample buffer filled, blocking...");
+          drx.recv().unwrap();
+          continue;
+        }
+
+        let size = sample_provider.get_samples(&mut data);
+        producer.push_slice(&data[..size]);
+        if producer.len() >= packet_size {
+          // debug!("wake sender");
+          _ = tx.try_send(());
+        }
+        // got += size;
 
         // debug!("got {} samples", size);
         if size == 0 {
           break 'packet;
         }
       }
+    });
 
-      while got >= packet_size {
-        // debug!("sending {} samples", packet_size);
-        me.send_voice_packet(ws, udp, &samples[..packet_size]).await?;
-        samples.copy_within(packet_size..got, 0);
-        got -= packet_size;
+    me.state.set(VoiceConnectionState::Playing).await?;
+    'packet: loop {
+      if consumer.len() < packet_size {
+        warn!("sample buffer drained, waiting... {} / {}", consumer.len(), packet_size);
+        rx.recv_async().await.unwrap();
       }
 
-      if Instant::now() >= udp.heartbeat_time + Duration::from_millis(5000) {
-        let ready = ws.ready.as_ref().context("no voice ready packet")?;
-        udp.send_keepalive(ready).await?;
+      while consumer.len() >= packet_size {
+        let mut udp_lock = me.udp.lock().await;
+        let udp = udp_lock.as_mut().context("no voice UDP socket")?;
+
+        let mut data = vec![0f32; packet_size];
+        consumer.pop_slice(&mut data);
+        // debug!("sending {} samples", packet_size);
+
+        if consumer.free_len() >= packet_size * 6 {
+          // debug!("sample buffer drained");
+          _ = dtx.try_send(());
+        }
+
+        me.send_voice_packet(&ready, udp, &data).await?;
+        // samples.copy_within(packet_size..got, 0);
+        // got -= packet_size;
+
+        if Instant::now() >= udp.heartbeat_time + Duration::from_millis(5000) {
+          udp.send_keepalive(&ready).await?;
+        }
       }
     }
 
