@@ -13,7 +13,9 @@ pub enum GatewayEvent {
   SessionDescription(SessionDescription),
   Speaking(Speaking),
   HeartbeatAck(u64),
-  Hello(Hello)
+  Resume(Resume),
+  Hello(Hello),
+  Resumed
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -59,6 +61,13 @@ pub struct Speaking {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Resume {
+  pub server_id: u64,
+  pub session_id: String,
+  pub token: String
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Hello {
   pub heartbeat_interval: f32
 }
@@ -74,7 +83,9 @@ impl From<&GatewayEvent> for GatewayOpcode {
       SessionDescription(_) => GatewayOpcode::SessionDescription,
       Speaking(_) => GatewayOpcode::Speaking,
       HeartbeatAck(_) => GatewayOpcode::HeartbeatAck,
-      Hello(_) => GatewayOpcode::Hello
+      Resume(_) => GatewayOpcode::Resume,
+      Hello(_) => GatewayOpcode::Hello,
+      Resumed => GatewayOpcode::Resumed
     }
   }
 }
@@ -97,7 +108,9 @@ impl TryFrom<GatewayPacket> for GatewayEvent {
       GatewayOpcode::SessionDescription => Ok(GatewayEvent::SessionDescription(serde_json::from_value(packet.data.context("no packet data")?)?)),
       GatewayOpcode::Speaking => Ok(GatewayEvent::Speaking(serde_json::from_value(packet.data.context("no packet data")?)?)),
       GatewayOpcode::HeartbeatAck => Ok(GatewayEvent::HeartbeatAck(serde_json::from_value(packet.data.context("no packet data")?)?)),
+      GatewayOpcode::Resume => Ok(GatewayEvent::Resume(serde_json::from_value(packet.data.context("no packet data")?)?)),
       GatewayOpcode::Hello => Ok(GatewayEvent::Hello(serde_json::from_value(packet.data.context("no packet data")?)?)),
+      GatewayOpcode::Resumed => Ok(GatewayEvent::Resumed),
       _ => Err(anyhow::anyhow!("Unsupported opcode: {}", packet.opcode))
     }
   }
@@ -118,7 +131,9 @@ impl TryFrom<GatewayEvent> for GatewayPacket {
         SessionDescription(session_description) => Some(serde_json::to_value(session_description)?),
         Speaking(speaking) => Some(serde_json::to_value(speaking)?),
         HeartbeatAck(nonce) => Some(serde_json::to_value(nonce)?),
-        Hello(hello) => Some(serde_json::to_value(hello)?)
+        Resume(resume) => Some(serde_json::to_value(resume)?),
+        Hello(hello) => Some(serde_json::to_value(hello)?),
+        Resumed => None
       }
     })
   }

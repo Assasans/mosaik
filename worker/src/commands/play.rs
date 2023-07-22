@@ -1,7 +1,9 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Result, Context};
 use async_trait::async_trait;
+use tokio::sync::Mutex;
 use twilight_model::{gateway::payload::{incoming::InteractionCreate, outgoing::UpdateVoiceState}, application::interaction::{application_command::CommandOptionValue, InteractionData}};
 use voice::VoiceConnection;
 
@@ -36,9 +38,21 @@ impl CommandHandler for PlayCommand {
     state.sender.command(&UpdateVoiceState::new(guild_id, channel_id, true, false))?;
     println!("connecting");
 
-    let mut player = Player::new(state.clone(), guild_id);
+    let mut players = state.players.write().await;
+    let player = players.get(&guild_id);
+    let player = if let Some(player) = player {
+      player.clone()
+    } else {
+      let player = Arc::new(Mutex::new(Player::new(state.clone(), guild_id)));
+      players.insert(guild_id, player.clone());
+      player
+    };
+    let mut player = player.lock().await;
+
     player.set_channel(channel_id);
-    player.connect().await?;
+    if player.connection.is_none() {
+      player.connect().await?;
+    }
 
     let connection = player.connection.as_ref().unwrap();
 
@@ -62,8 +76,6 @@ impl CommandHandler for PlayCommand {
     tokio::spawn(async move {
       VoiceConnection::run_udp_loop(clone).await.unwrap();
     });
-
-    state.players.write().await.insert(guild_id, player);
 
     let metadata = provider.get_metadata().await?;
     let metadata_string = metadata.iter()

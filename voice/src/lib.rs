@@ -4,6 +4,7 @@ pub mod event;
 pub mod provider;
 pub mod ws;
 pub mod udp;
+pub mod close_code;
 
 use tokio::{sync::Mutex, select, time::{interval, Interval}};
 use tracing::*;
@@ -35,6 +36,8 @@ pub use opcode::*;
 pub use event::*;
 
 use utils::state_flow::StateFlow;
+use crate::close_code::GatewayCloseCode;
+use crate::ws::VoiceConnectionMode;
 use self::{
   constants::{SAMPLE_RATE, CHANNEL_COUNT, CHUNK_DURATION, TIMESTAMP_STEP},
   provider::SampleProvider,
@@ -118,8 +121,10 @@ impl VoiceConnection {
     if let Some(bitrate) = options.bitrate {
       self.opus_encoder.lock().await.set_bitrate(Bitrate::Bits(i32::try_from(bitrate)?))?;
     }
+    // self.opus_encoder.lock().await.set_inband_fec(true)?;
+    // self.opus_encoder.lock().await.set_packet_loss_perc(50)?;
 
-    *self.ws.lock().await = Some(WebSocketVoiceConnection::new(options.clone()).await?);
+    *self.ws.lock().await = Some(WebSocketVoiceConnection::new(VoiceConnectionMode::New(options.clone())).await?);
 
     let mut ws_guard = self.ws.lock().await;
     let ws = ws_guard.as_mut().context("no voice gateway connection")?;
@@ -300,19 +305,19 @@ impl VoiceConnection {
   }
 
   pub async fn run_ws_loop(me: Weak<Self>) -> Result<()> {
-    let packets = {
+    let (read, close) = {
       let me = me.upgrade().context("voice connection dropped")?;
-      let mut ws_guard = me.ws.lock().await;
-      let ws = ws_guard.as_mut().context("no voice gateway connection")?;
+      let mut ws = me.ws.lock().await;
+      let ws = ws.as_mut().context("no voice gateway connection")?;
 
-      ws.packets.clone()
+      (ws.read.clone(), ws.close_rx.clone())
     };
 
     while let Some(me) = me.upgrade() {
       let mut interval = me.ws_heartbeat_interval.lock().await;
 
       select! {
-        event = packets.recv() => {
+        event = read.recv_async() => {
           let event = event?;
           match TryInto::<GatewayEvent>::try_into(event) {
             Ok(event) => {
@@ -323,7 +328,25 @@ impl VoiceConnection {
               warn!("Failed to decode event: {}", error);
             }
           }
-        },
+        }
+
+        frame = close.recv_async() => {
+          let frame = frame?;
+          info!(?frame, "voice gateway closed");
+          if let Some(frame) = frame {
+            let code: GatewayCloseCode = frame.code.into();
+            if code.can_reconnect() {
+              let mut ws = me.ws.lock().await;
+              let old_ws = ws.take().context("no voice gateway connection")?;
+
+              *ws = Some(WebSocketVoiceConnection::new(VoiceConnectionMode::Resume {
+                options: old_ws.options,
+                hello: old_ws.hello.context("no voice hello packet")?,
+                ready: old_ws.ready.context("no voice ready packet")?
+              }).await?);
+            }
+          }
+        }
 
         _ = async { interval.as_mut().unwrap().tick().await }, if interval.is_some() => {
           let mut ws_guard = me.ws.lock().await;
@@ -421,7 +444,7 @@ impl VoiceConnection {
         }
 
         me.send_voice_packet(&ready, udp, &data).await?;
-        me.recv_rtcp_stats(udp).await?;
+        // me.recv_rtcp_stats(udp).await?;
         // samples.copy_within(packet_size..got, 0);
         // got -= packet_size;
 

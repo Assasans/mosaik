@@ -2544,7 +2544,6 @@ name = "voice"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-channel",
  "discortp",
  "flume",
  "futures-util",

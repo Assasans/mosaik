@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.71"
-async-channel = "1.8.0"
 discortp = { version = "0.5.0", features = ["discord-full"] }
 futures-util = "0.3.28"
 opus = "0.3.0"
