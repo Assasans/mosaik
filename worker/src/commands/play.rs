@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use twilight_model::{gateway::payload::{incoming::InteractionCreate, outgoing::UpdateVoiceState}, application::interaction::{application_command::CommandOptionValue, InteractionData}};
 use voice::VoiceConnection;
 
-use crate::{try_unpack, State, interaction_response, get_option_as, player::Player, reply, update_reply, providers::{FileMediaProvider, MediaProvider}};
+use crate::{try_unpack, State, interaction_response, get_option_as, player::Player, reply, update_reply, providers::{FileMediaProvider, MediaProvider, FFmpegMediaProvider}};
 use crate::providers::SeekableHttpMediaProvider;
 
 use super::CommandHandler;
@@ -52,6 +52,7 @@ impl CommandHandler for PlayCommand {
     let provider: Box<dyn MediaProvider> = match provider {
       "file" => Box::new(FileMediaProvider::new(Path::new(input))),
       "http_seek" => Box::new(SeekableHttpMediaProvider::new(input.to_owned())),
+      "ffmpeg" => Box::new(FFmpegMediaProvider::new(input.to_owned())),
       _ => todo!("media provider {} is not implemented", provider)
     };
 

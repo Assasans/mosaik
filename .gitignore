@@ -1,8 +1,10 @@
 # JetBrains IDEs
-/.idea
+.idea
 
 # Build artifacts
-/target
+target
+build
+cmake-build-*
 
 # Secrets
 .env

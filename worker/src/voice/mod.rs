@@ -1,3 +1,5 @@
+pub mod ffmpeg;
+
 use std::fmt::{Debug, Formatter};
 use std::io;
 use anyhow::Result;
