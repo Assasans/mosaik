@@ -9,7 +9,6 @@ async-channel = "1.8.0"
 async-trait = "0.1.68"
 byteorder = "1.4.3"
 futures-util = "0.3.28"
-reqwest = { version = "0.11.16", features = ["stream", "blocking"] }
 rubato = "0.12.0"
 serde = "1.0.160"
 serde_json = "1.0.96"
@@ -26,7 +25,6 @@ twilight-model = "0.15.1"
 twilight-standby = "0.15.1"
 twilight-util = { version = "0.15.1", features = ["full"] }
 simd-json = { version = "0.6.0", features = ["allow-non-simd"] }
-symphonia = { version = "0.5.2", features = ["all"] }
 tokio = { version = "1.27.0", features = ["rt", "fs", "rt-multi-thread", "parking_lot", "io-util", "signal", "net", "macros", "process", "io-std", "sync", "time"] }
 tracing-tracy = { version = "0.10.2" }
 voice = { path = "../voice" }

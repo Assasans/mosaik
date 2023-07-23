@@ -4,13 +4,12 @@ use std::sync::Arc;
 
 use anyhow::{Result, Context};
 use futures_util::StreamExt;
-use symphonia::core::probe::Hint;
 use tracing::debug;
 use twilight_gateway::{Event, EventType};
 use twilight_model::{id::{Id, marker::{GuildMarker, ChannelMarker}}, gateway::payload::outgoing::UpdateVoiceState};
 
 use voice::{VoiceConnectionOptions, VoiceConnection};
-use crate::{State, voice::SymphoniaSampleProvider};
+use crate::State;
 use self::track::Track;
 
 #[derive(Debug)]
