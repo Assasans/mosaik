@@ -5,11 +5,11 @@ pub mod voice;
 pub mod player;
 
 use anyhow::Context;
-use commands::{CommandHandler, PlayCommand};
+use commands::{CommandHandler, PlayCommand, PauseCommand};
 use player::Player;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, util::SubscriberInitExt};
 use twilight_cache_inmemory::InMemoryCache;
-use twilight_util::builder::{command::{StringBuilder, ChannelBuilder}, InteractionResponseDataBuilder};
+use twilight_util::builder::{command::StringBuilder, InteractionResponseDataBuilder};
 
 use std::{collections::HashMap, env, error::Error, future::Future, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
@@ -71,6 +71,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
       .init();
   }
 
+  let guild_id = Id::<GuildMarker>::new(env::var("DISCORD_TEST_GUILD")?.parse()?);
   let (mut shard, state) = {
     let token = env::var("DISCORD_TOKEN")?;
 
@@ -81,7 +82,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let interactions = http.interaction(application_id);
 
     interactions
-      .create_guild_command(Id::<GuildMarker>::new(686219466824089640))
+      .create_guild_command(guild_id)
       .chat_input("play", "Play a track")?
       .description_localizations(&localizations! {
         "ru" => "Включить трек"
@@ -99,8 +100,16 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
       ])?
       .await?;
 
+    interactions
+      .create_guild_command(guild_id)
+      .chat_input("pause", "Play or pause a track")?
+      .description_localizations(&localizations! {
+        "ru" => "Поставить трек на паузу"
+      })?
+      .await?;
+
     let intents = Intents::GUILDS | Intents::GUILD_VOICE_STATES;
-    let mut shard = Shard::new(ShardId::ONE, token, intents);
+    let shard = Shard::new(ShardId::ONE, token, intents);
 
     let sender = shard.sender();
 
@@ -118,7 +127,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
   };
 
   let handlers: &mut HashMap<&'static str, Box<dyn CommandHandler>> = Box::leak(Box::new(HashMap::from([ // TODO(Assasans): Memory leak
-    ("play", Box::new(PlayCommand {}) as Box<dyn CommandHandler>)
+    ("play", Box::new(PlayCommand {}) as Box<dyn CommandHandler>),
+    ("pause", Box::new(PauseCommand {}) as Box<dyn CommandHandler>)
   ])));
 
   while let Ok(event) = shard.next_event().await {

@@ -1,39 +1,52 @@
-use std::sync::Arc;
-use anyhow::Result;
-use tokio::sync::{watch, RwLock};
+use std::sync::{Arc, RwLock};
+use tokio::sync::watch::{self, Receiver, Sender};
+use tokio::sync::watch::error::{RecvError, SendError};
 
 // TODO(Assasans): Use watch::[Sender/Receiver]<T>?
 pub struct StateFlow<T> {
   inner: Arc<RwLock<T>>,
-  sender: watch::Sender<()>,
-  receiver: watch::Receiver<()>
+  sender: Sender<()>,
+  receiver: Receiver<()>
 }
 
-impl<T> StateFlow<T> {
-  pub fn new(val: T) -> Self {
+impl<T: Clone> StateFlow<T> {
+  pub fn new(value: T) -> Self {
     let (sender, receiver) = watch::channel(());
     Self {
-      inner: Arc::new(RwLock::new(val)),
+      inner: Arc::new(RwLock::new(value)),
       sender,
-      receiver,
+      receiver
     }
   }
 
-  pub async fn set(&self, val: T) -> Result<()> {
-    *self.inner.write().await = val;
-    self.sender.send(())?;
-
-    Ok(())
+  pub fn set(&self, value: T) -> Result<(), SendError<()>> {
+    *self.inner.write().unwrap() = value;
+    self.sender.send(())
   }
 
-  pub async fn await_change(&self) -> Result<T> where T: Clone {
+  pub async fn await_change(&self) -> Result<T, RecvError> {
     let mut receiver = self.receiver.clone();
+    receiver.borrow_and_update();
     receiver.changed().await?;
 
-    Ok(self.get().await)
+    Ok(self.get())
   }
 
-  pub async fn get(&self) -> T where T: Clone {
-    self.inner.read().await.clone()
+  pub async fn wait_for(&self, block: impl Fn(&T) -> bool) -> Result<T, RecvError> {
+    let mut receiver = self.receiver.clone();
+    receiver.borrow_and_update();
+
+    loop {
+      receiver.changed().await?;
+
+      let value = self.get();
+      if block(&value) {
+        return Ok(value);
+      }
+    }
+  }
+
+  pub fn get(&self) -> T {
+    self.inner.read().unwrap().clone()
   }
 }

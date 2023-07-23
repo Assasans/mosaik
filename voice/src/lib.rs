@@ -16,6 +16,7 @@ use std::{
   sync::{Arc, Weak},
   time::{Duration, Instant}
 };
+use std::sync::atomic::{AtomicU8, Ordering};
 use opus::{Encoder, Bitrate, Channels, Application};
 use anyhow::{Result, anyhow, Context};
 use discortp::{
@@ -37,6 +38,7 @@ pub use event::*;
 
 use utils::state_flow::StateFlow;
 use crate::close_code::GatewayCloseCode;
+use crate::constants::{OPUS_SILENCE_FRAME, OPUS_SILENCE_FRAMES};
 use crate::ws::VoiceConnectionMode;
 use self::{
   constants::{SAMPLE_RATE, CHANNEL_COUNT, CHUNK_DURATION, TIMESTAMP_STEP},
@@ -86,10 +88,17 @@ struct IpDiscoveryResult {
   pub port: u16
 }
 
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum VoiceConnectionState {
   Disconnected,
   Connected,
   Playing
+}
+
+#[derive(Debug, PartialEq)]
+pub enum AudioFrame {
+  Opus(Vec<u8>),
+  Pcm(Vec<f32>)
 }
 
 pub struct VoiceConnection {
@@ -100,7 +109,9 @@ pub struct VoiceConnection {
   cipher_mode: VoiceCipherMode,
   opus_encoder: Mutex<Encoder>,
   pub sample_provider: Mutex<Option<Box<dyn SampleProvider>>>,
-  pub state: StateFlow<VoiceConnectionState>
+  pub state: StateFlow<VoiceConnectionState>,
+  paused: StateFlow<bool>,
+  silence_frames_left: AtomicU8
 }
 
 impl VoiceConnection {
@@ -113,7 +124,9 @@ impl VoiceConnection {
       cipher_mode: VoiceCipherMode::Suffix,
       opus_encoder: Mutex::new(Encoder::new(48000, Channels::Stereo, Application::Audio)?),
       sample_provider: Mutex::new(None),
-      state: StateFlow::new(VoiceConnectionState::Disconnected)
+      state: StateFlow::new(VoiceConnectionState::Disconnected),
+      paused: StateFlow::new(false),
+      silence_frames_left: AtomicU8::new(0)
     })
   }
 
@@ -166,13 +179,13 @@ impl VoiceConnection {
     let key = Key::from_slice(&session_description.secret_key);
     *self.cipher.lock().await = Some(XSalsa20Poly1305::new(&key));
 
-    self.state.set(VoiceConnectionState::Connected).await?;
+    self.state.set(VoiceConnectionState::Connected)?;
 
     Ok(())
   }
 
   pub async fn disconnect(&self) -> Result<()> {
-    self.state.set(VoiceConnectionState::Disconnected).await?;
+    self.state.set(VoiceConnectionState::Disconnected)?;
     *self.udp.lock().await = None;
 
     let mut ws_lock = self.ws.lock().await;
@@ -250,7 +263,7 @@ impl VoiceConnection {
     Ok(())
   }
 
-  pub async fn send_voice_packet(&self, ready: &Ready, udp: &mut UdpVoiceConnection, input: &[f32]) -> Result<()> {
+  pub async fn send_voice_packet(&self, ready: &Ready, udp: &mut UdpVoiceConnection, frame: AudioFrame) -> Result<()> {
     let cipher_guard = self.cipher.lock().await;
     let cipher = cipher_guard.as_ref().context("no voice cipher")?;
 
@@ -273,7 +286,15 @@ impl VoiceConnection {
     let nonce_bytes = random::<[u8; 24]>();
     let nonce = GenericArray::from_slice(&nonce_bytes);
 
-    let size = self.opus_encoder.lock().await.encode_float(input, &mut payload[TAG_SIZE..TAG_SIZE + rtp_buffer_length - 12 - nonce_bytes.len()])?;
+    let size = match frame {
+      AudioFrame::Opus(data) => {
+        payload[TAG_SIZE..TAG_SIZE + data.len()].copy_from_slice(&data);
+        data.len()
+      }
+      AudioFrame::Pcm(data) => {
+        self.opus_encoder.lock().await.encode_float(&data, &mut payload[TAG_SIZE..TAG_SIZE + rtp_buffer_length - 12 - nonce_bytes.len()])?
+      }
+    };
 
     payload[TAG_SIZE + size..TAG_SIZE + size + nonce_bytes.len()].copy_from_slice(&nonce_bytes);
 
@@ -302,6 +323,20 @@ impl VoiceConnection {
     }
 
     Ok(())
+  }
+
+  pub fn set_paused(&self, is_paused: bool) -> Result<()> {
+    self.paused.set(is_paused)?;
+    if is_paused {
+      self.silence_frames_left.store(OPUS_SILENCE_FRAMES, Ordering::Relaxed);
+    } else {
+      self.silence_frames_left.store(0, Ordering::Relaxed);
+    }
+    Ok(())
+  }
+
+  pub fn is_paused(&self) -> bool {
+    self.paused.get()
   }
 
   pub async fn run_ws_loop(me: Weak<Self>) -> Result<()> {
@@ -413,7 +448,7 @@ impl VoiceConnection {
     srx.recv_async().await?;
     debug!("jitter buffer filled halfway");
 
-    me.state.set(VoiceConnectionState::Playing).await?;
+    me.state.set(VoiceConnectionState::Playing)?;
 
     {
       let mut udp_lock = me.udp.lock().await;
@@ -434,19 +469,29 @@ impl VoiceConnection {
         let mut udp_lock = me.udp.lock().await;
         let udp = udp_lock.as_mut().context("no voice UDP socket")?;
 
-        let mut data = vec![0f32; packet_size];
-        consumer.pop_slice(&mut data);
-        // debug!("sending {} samples", packet_size);
+        if me.paused.get() && me.silence_frames_left.load(Ordering::Relaxed) > 0 {
+          me.silence_frames_left.fetch_sub(1, Ordering::SeqCst);
+          me.send_voice_packet(&ready, udp, AudioFrame::Opus(OPUS_SILENCE_FRAME.to_vec())).await?;
+          if me.silence_frames_left.load(Ordering::Relaxed) == 0 {
+            debug!("waiting for unpause...");
+            me.paused.wait_for(|paused| *paused == false).await?;
+            debug!("unpaused");
+          }
+        } else {
+          let mut data = vec![0f32; packet_size];
+          consumer.pop_slice(&mut data);
+          // debug!("sending {} samples", packet_size);
 
-        if consumer.free_len() >= packet_size * 6 {
-          // debug!("sample buffer drained");
-          _ = dtx.try_send(());
+          if consumer.free_len() >= packet_size * 6 {
+            // debug!("sample buffer drained");
+            _ = dtx.try_send(());
+          }
+
+          me.send_voice_packet(&ready, udp, AudioFrame::Pcm(data)).await?;
+          // samples.copy_within(packet_size..got, 0);
+          // got -= packet_size;
         }
-
-        me.send_voice_packet(&ready, udp, &data).await?;
         // me.recv_rtcp_stats(udp).await?;
-        // samples.copy_within(packet_size..got, 0);
-        // got -= packet_size;
 
         if Instant::now() >= udp.heartbeat_time + Duration::from_millis(5000) {
           udp.send_keepalive(&ready).await?;
@@ -455,7 +500,7 @@ impl VoiceConnection {
     }
 
     debug!("play loop finished");
-    me.state.set(VoiceConnectionState::Connected).await?;
+    me.state.set(VoiceConnectionState::Connected)?;
     Ok(())
   }
 }

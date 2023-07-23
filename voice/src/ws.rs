@@ -56,7 +56,7 @@ impl WebSocketVoiceConnection {
 
                   Message::Close(frame) => {
                     debug!("voice gateway closed with {:?}", frame);
-                    close_rx_tx.send_async(frame);
+                    close_rx_tx.send_async(frame).await.unwrap();
                   }
 
                   _ => {
