@@ -39,15 +39,24 @@ impl Decoder {
     }
   }
 
-  pub fn read_frame(&self) -> Vec<f32> {
+  pub fn read_frame(&self, is_flush: bool) -> Option<Vec<f32>> {
     let mut data_ptr = std::ptr::null_mut();
     let mut data_length = 0;
-    unsafe {
-      ffi::decoder_read_frame(self.decoder, &mut data_ptr, &mut data_length);
+    let result = unsafe {
+      if is_flush {
+        ffi::decoder_flush_frame(self.decoder, &mut data_ptr, &mut data_length)
+      } else {
+        ffi::decoder_read_frame(self.decoder, &mut data_ptr, &mut data_length)
+      }
+    };
+
+    // AVERROR(EAGAIN)
+    if result < 0 && result != -11 {
+      return None;
     }
 
     let data_slice = unsafe { slice::from_raw_parts(data_ptr, data_length as usize) };
-    data_slice.to_vec()
+    Some(data_slice.to_vec())
   }
 }
 
@@ -67,7 +76,7 @@ fn run() {
   let stdout = io::stdout();
   let mut handle = stdout.lock();
   loop {
-    let frame = decoder.read_frame();
+    let frame = decoder.read_frame(false).unwrap();
     eprintln!("Frame {} samples", frame.len());
 
     for sample in frame {

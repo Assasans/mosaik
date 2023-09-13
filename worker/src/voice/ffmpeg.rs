@@ -1,14 +1,17 @@
+use tracing::debug;
 use decoder::Decoder;
 use voice::provider::SampleProvider;
 
 pub struct FFmpegSampleProvider {
-  pub decoder: Decoder
+  pub decoder: Decoder,
+  flushing: bool
 }
 
 impl FFmpegSampleProvider {
   pub fn new() -> Self {
     Self {
-      decoder: Decoder::new()
+      decoder: Decoder::new(),
+      flushing: false
     }
   }
 
@@ -22,9 +25,21 @@ impl FFmpegSampleProvider {
 }
 
 impl SampleProvider for FFmpegSampleProvider {
-  fn get_samples(&mut self, samples: &mut [f32]) -> usize {
-    let read = self.decoder.read_frame();
-    samples[..read.len()].copy_from_slice(&read);
-    read.len()
+  fn get_samples(&mut self, samples: &mut [f32]) -> Option<usize> {
+    match self.decoder.read_frame(self.flushing) {
+      Some(read) => {
+        samples[..read.len()].copy_from_slice(&read);
+        Some(read.len())
+      },
+      None => {
+        if !self.flushing {
+          debug!("flushing decoder...");
+          self.flushing = true;
+          return Some(0); // Request retry
+        }
+
+        None
+      }
+    }
   }
 }

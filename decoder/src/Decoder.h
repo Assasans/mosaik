@@ -349,11 +349,11 @@ public:
           if((ret = swr_convert_frame(swr.get(), out_frame.get(), filter_frame.get())) < 0)
             goto end;
 
-          const int n = filter_frame->nb_samples * filter_frame->ch_layout.nb_channels;
-          data = (float *)filter_frame->data[0];
+          const int n = out_frame->nb_samples * out_frame->ch_layout.nb_channels;
+          data = reinterpret_cast<float *>(out_frame->data[0]);
           data_length = n;
 
-          // print_frame(filter_frame.get());
+          // print_frame(out_frame.get());
           av_frame_unref(filter_frame.get());
         }
         av_frame_unref(frame.get());
@@ -362,14 +362,33 @@ public:
     av_packet_unref(packet.get());
 
     end:
-    // avfilter_graph_free(&filter_graph);
-    // avcodec_free_context(&dec_ctx);
-    // avformat_close_input(&fmt_ctx);
-    // av_packet_free(&packet);
-    // av_frame_free(&frame);
-    // av_frame_free(&out_frame);
-    // av_frame_free(&filter_frame);
-    // swr_free(&swr);
+
+    if(ret < 0 && ret != AVERROR_EOF && ret != AVERROR(EAGAIN)) {
+      fprintf(stderr, "Error occurred: %s\n", av_err2string(ret).c_str());
+      exit(1);
+    }
+
+    return ret;
+  }
+
+  int flush_frame(float *&data, int &data_length) {
+    int ret;
+    if((ret = swr_convert_frame(swr.get(), out_frame.get(), nullptr)) < 0)
+      goto end;
+
+    {
+      const int n = out_frame->nb_samples * out_frame->ch_layout.nb_channels;
+      if(n < 1) {
+        return AVERROR_EOF;
+      }
+
+      data = reinterpret_cast<float *>(out_frame->data[0]);
+      data_length = n;
+
+      // print_frame(out_frame.get());
+    }
+
+    end:
 
     if(ret < 0 && ret != AVERROR_EOF && ret != AVERROR(EAGAIN)) {
       fprintf(stderr, "Error occurred: %s\n", av_err2string(ret).c_str());
@@ -398,6 +417,10 @@ DLL_EXPORT int decoder_init_filters(Decoder *decoder, const char *filters_descr)
 
 DLL_EXPORT int decoder_read_frame(Decoder *decoder, float *&data, int &data_length) {
   return decoder->read_frame(data, data_length);
+}
+
+DLL_EXPORT int decoder_flush_frame(Decoder *decoder, float *&data, int &data_length) {
+  return decoder->flush_frame(data, data_length);
 }
 
 #endif

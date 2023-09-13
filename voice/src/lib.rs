@@ -310,12 +310,11 @@ impl VoiceConnection {
         spin_sleep::sleep(udp.deadline - Instant::now());
         let delta = Instant::now().saturating_duration_since(udp.deadline);
         udp.deadline = Instant::now() + CHUNK_DURATION;
+        udp.socket.send(&udp.rtp_buffer[..12 + TAG_SIZE + size + nonce_bytes.len()]).await?;
 
         if delta > CHUNK_DURATION {
-          warn!("Voice packet deadline exceeded by {:?}", delta);
+          warn!("Voice packet deadline exceeded by {:?}", delta - CHUNK_DURATION);
         }
-
-        udp.socket.send(&udp.rtp_buffer[..12 + TAG_SIZE + size + nonce_bytes.len()]).await?;
       },
       Err(error) => {
         return Err(anyhow!(error));
@@ -429,17 +428,21 @@ impl VoiceConnection {
           continue;
         }
 
-        let size = sample_provider.get_samples(&mut data);
-        producer.push_slice(&data[..size]);
-        if producer.len() >= packet_size {
-          // debug!("wake sender");
-          _ = tx.try_send(());
-        }
-        // got += size;
+        match sample_provider.get_samples(&mut data) {
+          Some(size) => {
+            producer.push_slice(&data[..size]);
+            if producer.len() >= packet_size {
+              // debug!("wake sender");
+              _ = tx.try_send(());
+            }
+            // got += size;
 
-        // debug!("got {} samples", size);
-        if size == 0 {
-          break 'packet;
+            // debug!("got {} samples", size);
+          }
+          None => {
+            debug!("got sample provider eof");
+            break 'packet;
+          }
         }
       }
     });
@@ -498,6 +501,16 @@ impl VoiceConnection {
         }
       }
     }
+
+    // Flush
+    let len = consumer.len();
+    let mut data = vec![0f32; packet_size];
+    debug!("flushing {} samples...", len);
+    consumer.pop_slice(&mut data[..len]);
+
+    let mut udp_lock = me.udp.lock().await;
+    let udp = udp_lock.as_mut().context("no voice UDP socket")?;
+    me.send_voice_packet(&ready, udp, AudioFrame::Pcm(data)).await?;
 
     debug!("play loop finished");
     me.state.set(VoiceConnectionState::Connected)?;
