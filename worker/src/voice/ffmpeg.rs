@@ -47,7 +47,7 @@ impl SampleProvider for FFmpegSampleProvider {
     }
   }
 
-  fn as_any(&mut self) -> &mut dyn Any {
+  fn as_any(&mut self) -> &mut (dyn Any + Sync + Send) {
     self
   }
 
@@ -63,7 +63,7 @@ pub struct FFmpegSampleProviderHandle {
 }
 
 impl SampleProviderHandle for FFmpegSampleProviderHandle {
-  fn as_any(&self) -> &dyn Any {
+  fn as_any(&self) -> &(dyn Any + Sync + Send) {
     self
   }
 }

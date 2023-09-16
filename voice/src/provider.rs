@@ -8,7 +8,7 @@ pub trait SampleProvider: Sync + Send {
   /// If there are no samples currently available but could potentially become available later, this function returns an empty vector.
   fn get_samples(&mut self) -> Option<Vec<f32>>;
 
-  fn as_any(&mut self) -> &mut dyn Any;
+  fn as_any(&mut self) -> &mut (dyn Any + Sync + Send);
 
   fn get_handle(&self) -> Box<dyn SampleProviderHandle>;
 }
@@ -17,5 +17,5 @@ pub trait SampleProvider: Sync + Send {
 ///
 /// Used to communicate with a locked [`SampleProvider`] during playback.
 pub trait SampleProviderHandle: Sync + Send {
-  fn as_any(&self) -> &dyn Any;
+  fn as_any(&self) -> &(dyn Any + Sync + Send);
 }

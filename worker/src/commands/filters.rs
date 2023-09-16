@@ -39,42 +39,42 @@ impl CommandHandler for FiltersCommand {
     let player = player.lock().await;
 
     if let Some(connection) = &player.connection {
-      {
-        let handle = connection.sample_provider_handle.lock().await;
-        let handle = handle.as_ref().unwrap();
-        let handle = handle.as_any();
-        if let Some(handle) = handle.downcast_ref::<FFmpegSampleProviderHandle>() {
-          if filters == "bypass" {
-            handle.set_enable_filter_graph(false).unwrap();
-          } else {
-            handle.set_enable_filter_graph(true).unwrap();
-            match handle.init_filters(&filters) {
-              Ok(()) => {},
-              Err(error) => {
-                error!("failed to init filters: {:?}", error);
+      let handle = connection.sample_provider_handle.lock().await;
+      let handle = handle.as_ref().unwrap();
+      let handle = handle.as_any();
+      if let Some(handle) = handle.downcast_ref::<FFmpegSampleProviderHandle>() {
+        if filters == "bypass" {
+          handle.set_enable_filter_graph(false).unwrap();
 
-                // TODO(Assasans): UDP loop may call get_samples after init_filters failed,
-                // but filter graph is still not disabled, causing segfault.
-                handle.set_enable_filter_graph(false).unwrap();
-              }
+          update_reply!(state, interaction)
+            .content(Some("Disabled filter graph"))?
+            .await?;
+        } else {
+          handle.set_enable_filter_graph(true).unwrap();
+          match handle.init_filters(&filters) {
+            Ok(()) => {
+              update_reply!(state, interaction)
+                .content(Some(&format!("Set filter graph: `{}`", filters)))?
+                .await?;
+            },
+            Err(error) => {
+              error!("failed to init filters: {:?}", error);
+
+              // TODO(Assasans): UDP loop may call get_samples after init_filters failed,
+              // but filter graph is still not disabled, causing segfault.
+              handle.set_enable_filter_graph(false).unwrap();
+
+              update_reply!(state, interaction)
+                .content(Some(&format!("Failed to set filter graph: `{:?}`", error)))?
+                .await?;
             }
           }
         }
-      }
-
-      if filters == "bypass" {
-        update_reply!(state, interaction)
-          .content(Some("Disabled filter graph"))?
-          .await?;
       } else {
         update_reply!(state, interaction)
-          .content(Some(&format!("Set filter graph: `{}`", filters)))?
+          .content(Some("Unsupported sample provider"))?
           .await?;
       }
-
-      // update_reply!(state, interaction)
-      //   .content(Some("Error"))?
-      //   .await?;
     }
 
     Ok(())
