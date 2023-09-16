@@ -1,8 +1,10 @@
 mod metadata;
 mod ffmpeg;
+mod yt_dlp;
 
 pub use metadata::*;
 pub use ffmpeg::*;
+pub use yt_dlp::*;
 
 use std::fmt::Debug;
 use anyhow::Result;
