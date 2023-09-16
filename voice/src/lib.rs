@@ -39,6 +39,7 @@ pub use event::*;
 use utils::state_flow::StateFlow;
 use crate::close_code::GatewayCloseCode;
 use crate::constants::{OPUS_SILENCE_FRAME, OPUS_SILENCE_FRAMES};
+use crate::provider::SampleProviderHandle;
 use crate::ws::VoiceConnectionMode;
 use self::{
   constants::{SAMPLE_RATE, CHANNEL_COUNT, CHUNK_DURATION, TIMESTAMP_STEP},
@@ -109,6 +110,7 @@ pub struct VoiceConnection {
   cipher_mode: VoiceCipherMode,
   opus_encoder: Mutex<Encoder>,
   pub sample_provider: Mutex<Option<Box<dyn SampleProvider>>>,
+  pub sample_provider_handle: Mutex<Option<Box<dyn SampleProviderHandle>>>,
   pub state: StateFlow<VoiceConnectionState>,
   paused: StateFlow<bool>,
   silence_frames_left: AtomicU8
@@ -124,6 +126,7 @@ impl VoiceConnection {
       cipher_mode: VoiceCipherMode::Suffix,
       opus_encoder: Mutex::new(Encoder::new(48000, Channels::Stereo, Application::Audio)?),
       sample_provider: Mutex::new(None),
+      sample_provider_handle: Mutex::new(None),
       state: StateFlow::new(VoiceConnectionState::Disconnected),
       paused: StateFlow::new(false),
       silence_frames_left: AtomicU8::new(0)

@@ -1,32 +1,37 @@
+use std::any::Any;
+use std::sync::{Arc, Mutex};
 use tracing::debug;
 use decoder::Decoder;
-use voice::provider::SampleProvider;
+use voice::provider::{SampleProvider, SampleProviderHandle};
 
 pub struct FFmpegSampleProvider {
-  pub decoder: Decoder,
+  pub decoder: Arc<Mutex<Decoder>>,
   flushing: bool
 }
 
 impl FFmpegSampleProvider {
   pub fn new() -> Self {
     Self {
-      decoder: Decoder::new(),
+      decoder: Arc::new(Mutex::new(Decoder::new())),
       flushing: false
     }
   }
 
   pub fn open(&mut self, path: &str) {
-    self.decoder.open_input(path);
+    let mut decoder = self.decoder.lock().unwrap();
+    decoder.open_input(path);
   }
 
   pub fn init_filters(&mut self, description: &str) {
-    self.decoder.init_filters(description);
+    let mut decoder = self.decoder.lock().unwrap();
+    decoder.init_filters(description);
   }
 }
 
 impl SampleProvider for FFmpegSampleProvider {
   fn get_samples(&mut self) -> Option<Vec<f32>> {
-    match self.decoder.read_frame(self.flushing) {
+    let mut decoder = self.decoder.lock().unwrap();
+    match decoder.read_frame(self.flushing) {
       Some(read) => {
         Some(read)
       },
@@ -40,5 +45,32 @@ impl SampleProvider for FFmpegSampleProvider {
         None
       }
     }
+  }
+
+  fn as_any(&mut self) -> &mut dyn Any {
+    self
+  }
+
+  fn get_handle(&self) -> Box<dyn SampleProviderHandle> {
+    Box::new(FFmpegSampleProviderHandle {
+      decoder: self.decoder.clone()
+    })
+  }
+}
+
+pub struct FFmpegSampleProviderHandle {
+  pub decoder: Arc<Mutex<Decoder>>,
+}
+
+impl SampleProviderHandle for FFmpegSampleProviderHandle {
+  fn as_any(&self) -> &dyn Any {
+    self
+  }
+}
+
+impl FFmpegSampleProviderHandle {
+  pub fn init_filters(&self, description: &str) {
+    let mut decoder = self.decoder.lock().unwrap();
+    decoder.init_filters(description);
   }
 }

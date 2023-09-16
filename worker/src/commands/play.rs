@@ -67,7 +67,9 @@ impl CommandHandler for PlayCommand {
       _ => todo!("media provider {} is not implemented", provider)
     };
 
-    *connection.sample_provider.lock().await = Some(provider.get_sample_provider().await?);
+    let sample_provider = provider.get_sample_provider().await?;
+    *connection.sample_provider_handle.lock().await = Some(sample_provider.get_handle());
+    *connection.sample_provider.lock().await = Some(sample_provider);
 
     let clone = connection.clone();
     tokio::spawn(async move {
