@@ -255,11 +255,6 @@ public:
       return ret;
     }
 
-    out_frame->format = AV_SAMPLE_FMT_FLT;
-    out_frame->ch_layout = AV_CHANNEL_LAYOUT_STEREO;
-    out_frame->sample_rate = 48000;
-    out_frame->nb_samples = dec_ctx->frame_size;
-
     return ret;
   }
 
@@ -301,6 +296,7 @@ public:
       while(ret >= 0) {
         ret = avcodec_receive_frame(dec_ctx.get(), frame.get());
         if(ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+          av_log(nullptr, AV_LOG_ERROR, "AGAIN or EOF while avcodec_receive_frame\n");
           break;
         } else if(ret < 0) {
           av_log(nullptr, AV_LOG_ERROR, "Error while receiving a frame from the decoder\n");
@@ -322,6 +318,10 @@ public:
             goto end;
           }
 
+          out_frame->format = AV_SAMPLE_FMT_FLT;
+          out_frame->ch_layout = AV_CHANNEL_LAYOUT_STEREO;
+          out_frame->sample_rate = 48000;
+
           if(!swr_is_initialized(swr.get())) {
             auto swr_raw = swr.get();
             fprintf(
@@ -342,18 +342,23 @@ public:
               nullptr
             );
 
-            if((ret = swr_init(swr.get())) < 0)
+            if((ret = swr_init(swr.get())) < 0) {
+              av_log(nullptr, AV_LOG_ERROR, "Error while swr_init\n");
               goto end;
+            }
           }
 
-          if((ret = swr_convert_frame(swr.get(), out_frame.get(), filter_frame.get())) < 0)
+          if((ret = swr_convert_frame(swr.get(), out_frame.get(), filter_frame.get())) < 0) {
+            av_log(nullptr, AV_LOG_ERROR, "Error while swr_convert_frame\n");
             goto end;
+          }
 
           const int n = out_frame->nb_samples * out_frame->ch_layout.nb_channels;
           data = reinterpret_cast<float *>(out_frame->data[0]);
           data_length = n;
 
           // print_frame(out_frame.get());
+          // av_frame_unref(out_frame.get());
           av_frame_unref(filter_frame.get());
         }
         av_frame_unref(frame.get());
@@ -372,9 +377,15 @@ public:
   }
 
   int flush_frame(float *&data, int &data_length) {
+    out_frame->format = AV_SAMPLE_FMT_FLT;
+    out_frame->ch_layout = AV_CHANNEL_LAYOUT_STEREO;
+    out_frame->sample_rate = 48000;
+
     int ret;
-    if((ret = swr_convert_frame(swr.get(), out_frame.get(), nullptr)) < 0)
+    if((ret = swr_convert_frame(swr.get(), out_frame.get(), nullptr)) < 0) {
+      av_log(nullptr, AV_LOG_ERROR, "Error while swr_convert_frame (flush)\n");
       goto end;
+    }
 
     {
       const int n = out_frame->nb_samples * out_frame->ch_layout.nb_channels;
@@ -386,6 +397,7 @@ public:
       data_length = n;
 
       // print_frame(out_frame.get());
+      // av_frame_unref(out_frame.get());
     }
 
     end:
@@ -396,6 +408,11 @@ public:
     }
 
     return ret;
+  }
+
+  int unref_frame() {
+    av_frame_unref(out_frame.get());
+    return 0;
   }
 };
 
@@ -421,6 +438,10 @@ DLL_EXPORT int decoder_read_frame(Decoder *decoder, float *&data, int &data_leng
 
 DLL_EXPORT int decoder_flush_frame(Decoder *decoder, float *&data, int &data_length) {
   return decoder->flush_frame(data, data_length);
+}
+
+DLL_EXPORT int decoder_unref_frame(Decoder *decoder) {
+  return decoder->unref_frame();
 }
 
 #endif

@@ -56,7 +56,15 @@ impl Decoder {
     }
 
     let data_slice = unsafe { slice::from_raw_parts(data_ptr, data_length as usize) };
-    Some(data_slice.to_vec())
+    let data = data_slice.to_vec();
+    self.unref_frame();
+    Some(data)
+  }
+
+  pub fn unref_frame(&self) {
+    unsafe {
+      ffi::decoder_unref_frame(self.decoder);
+    }
   }
 }
 

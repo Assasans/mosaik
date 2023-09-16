@@ -12,11 +12,25 @@ extern "C" {
 
 #include "Decoder.h"
 
+static void print_frame(const float *frame, const int n) {
+  const uint32_t *p = (uint32_t *)frame;
+  const uint32_t *p_end = p + n;
+
+  while(p < p_end) {
+    fputc((uint8_t)(*p & 0xff), stdout);
+    fputc((uint8_t)(*p >> 8 & 0xff), stdout);
+    fputc((uint8_t)(*p >> 16 & 0xff), stdout);
+    fputc((uint8_t)(*p >> 24 & 0xff), stdout);
+    p++;
+  }
+  fflush(stdout);
+}
+
 int main(int argc, char **argv) {
   int ret;
 
   Decoder decoder { };
-  if((ret = decoder.open_input("file:///run/media/assasans/D2C29497C2948201/Documents/REAPER Media/Катерина 2/3.mp3")) < 0) {
+  if((ret = decoder.open_input("file:///home/assasans/Downloads/Adeq_Slim_the_Pineapple_New_Sylveon_-_TRINITY_MASHUP_MIX__Mashupble_3.mp3")) < 0) {
     av_log(nullptr, AV_LOG_ERROR, "Cannot open input\n");
     return ret;
   }
@@ -27,13 +41,17 @@ int main(int argc, char **argv) {
   }
 
   int x = 0;
-  float* chunk = new float[4096];
 
+  float* chunk;
   int length;
   while(true) {
+    length = 0;
     ret = decoder.read_frame(chunk, length);
-    fprintf(stderr, "read %d\n", ret);
+    if(ret >= 0) fprintf(stderr, "read %d, length %d\n", ret, length);
     if(ret < 0 && ret != AVERROR(EAGAIN)) break;
+
+    // print_frame(chunk, length);
+    decoder.unref_frame();
 
     x++;
     if(x == 100) {
@@ -52,6 +70,8 @@ int main(int argc, char **argv) {
     ret = decoder.flush_frame(chunk, length);
     fprintf(stderr, "flush %d\n", length);
     if(ret < 0 && ret != AVERROR(EAGAIN)) break;
+
+    decoder.unref_frame();
   }
 
   return 0;
