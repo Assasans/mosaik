@@ -18,13 +18,12 @@ tokio-util = { version = "0.7.8", features = ["io", "io-util"] }
 tracing = "0.1.37"
 tracing-subscriber = "0.3.16"
 twilight-cache-inmemory = "0.15.1"
-twilight-gateway = { version = "0.15.1", features = ["simd-json"] }
-twilight-http = { version = "0.15.1", features = ["simd-json"] }
+twilight-gateway = { version = "0.15.1" }
+twilight-http = { version = "0.15.1" }
 twilight-mention = "0.15.1"
 twilight-model = "0.15.1"
 twilight-standby = "0.15.1"
 twilight-util = { version = "0.15.1", features = ["full"] }
-simd-json = { version = "0.6.0", features = ["allow-non-simd"] }
 tokio = { version = "1.27.0", features = ["rt", "fs", "rt-multi-thread", "parking_lot", "io-util", "signal", "net", "macros", "process", "io-std", "sync", "time"] }
 tracing-tracy = { version = "0.10.2" }
 voice = { path = "../voice" }
