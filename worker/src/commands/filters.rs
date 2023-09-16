@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use tracing::error;
 use twilight_model::application::interaction::application_command::CommandOptionValue;
 use twilight_model::application::interaction::InteractionData;
 use twilight_model::gateway::payload::incoming::InteractionCreate;
@@ -43,13 +44,37 @@ impl CommandHandler for FiltersCommand {
         let handle = handle.as_ref().unwrap();
         let handle = handle.as_any();
         if let Some(handle) = handle.downcast_ref::<FFmpegSampleProviderHandle>() {
-          handle.init_filters(&filters).unwrap();
+          if filters == "bypass" {
+            handle.set_enable_filter_graph(false).unwrap();
+          } else {
+            handle.set_enable_filter_graph(true).unwrap();
+            match handle.init_filters(&filters) {
+              Ok(()) => {},
+              Err(error) => {
+                error!("failed to init filters: {:?}", error);
+
+                // TODO(Assasans): UDP loop may call get_samples after init_filters failed,
+                // but filter graph is still not disabled, causing segfault.
+                handle.set_enable_filter_graph(false).unwrap();
+              }
+            }
+          }
         }
       }
 
-      update_reply!(state, interaction)
-        .content(Some("Ok"))?
-        .await?;
+      if filters == "bypass" {
+        update_reply!(state, interaction)
+          .content(Some("Disabled filter graph"))?
+          .await?;
+      } else {
+        update_reply!(state, interaction)
+          .content(Some(&format!("Set filter graph: `{}`", filters)))?
+          .await?;
+      }
+
+      // update_reply!(state, interaction)
+      //   .content(Some("Error"))?
+      //   .await?;
     }
 
     Ok(())

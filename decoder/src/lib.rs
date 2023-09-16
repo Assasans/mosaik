@@ -52,6 +52,12 @@ impl Decoder {
     })
   }
 
+  pub fn set_enable_filter_graph(&mut self, enable: bool) -> Result<(), RawError> {
+    result_zero!(unsafe {
+      ffi::decoder_set_enable_filter_graph(self.decoder, enable)
+    })
+  }
+
   pub fn read_frame(&mut self, is_flush: bool) -> Option<Vec<f32>> {
     let mut data_ptr = std::ptr::null_mut();
     let mut data_length = 0;
@@ -70,7 +76,7 @@ impl Decoder {
 
     let data_slice = unsafe { slice::from_raw_parts(data_ptr, data_length as usize) };
     let data = data_slice.to_vec();
-    self.unref_frame();
+    self.unref_frame().unwrap();
     Some(data)
   }
 

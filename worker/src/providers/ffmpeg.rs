@@ -25,7 +25,7 @@ impl MediaProvider for FFmpegMediaProvider {
   async fn get_sample_provider(&self) -> Result<Box<dyn SampleProvider>> {
     let mut provider = FFmpegSampleProvider::new();
     provider.open(&self.path).unwrap();
-    provider.init_filters("anull").unwrap();
+    // provider.init_filters("anull").unwrap();
     Ok(Box::new(provider))
   }
 

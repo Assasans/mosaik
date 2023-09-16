@@ -69,6 +69,11 @@ impl SampleProviderHandle for FFmpegSampleProviderHandle {
 }
 
 impl FFmpegSampleProviderHandle {
+  pub fn set_enable_filter_graph(&self, enable: bool) -> Result<(), RawError> {
+    let mut decoder = self.decoder.lock().unwrap();
+    decoder.set_enable_filter_graph(enable)
+  }
+
   pub fn init_filters(&self, description: &str) -> Result<(), RawError> {
     let mut decoder = self.decoder.lock().unwrap();
     decoder.init_filters(description)

@@ -95,6 +95,7 @@ private:
   AVFilterContext *buffersink_ctx;
   AVFilterContext *buffersrc_ctx;
   std::unique_ptr<AVFilterGraph, AVFilterGraphDeleter> filter_graph;
+  bool enable_filter_graph = false;
 
   std::unique_ptr<AVPacket, AVPacketDeleter> packet;
   std::unique_ptr<AVFrame, AVFrameDeleter> frame;
@@ -296,28 +297,38 @@ public:
       while(ret >= 0) {
         ret = avcodec_receive_frame(dec_ctx.get(), frame.get());
         if(ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-          av_log(nullptr, AV_LOG_ERROR, "AGAIN or EOF while avcodec_receive_frame\n");
+          // av_log(nullptr, AV_LOG_ERROR, "AGAIN or EOF while avcodec_receive_frame\n");
           break;
         } else if(ret < 0) {
           av_log(nullptr, AV_LOG_ERROR, "Error while receiving a frame from the decoder\n");
           goto end;
         }
 
-        /* push the audio data from decoded frame into the filtergraph */
-        if(av_buffersrc_add_frame_flags(buffersrc_ctx, frame.get(), AV_BUFFERSRC_FLAG_KEEP_REF) < 0) {
-          av_log(nullptr, AV_LOG_ERROR, "Error while feeding the audio filtergraph\n");
-          break;
+        std::unique_ptr<AVFrame, AVFrameDeleter>* process_frame;
+        if(enable_filter_graph) {
+          process_frame = &filter_frame;
+
+          /* push the audio data from decoded frame into the filtergraph */
+          if(av_buffersrc_add_frame_flags(buffersrc_ctx, frame.get(), AV_BUFFERSRC_FLAG_KEEP_REF) < 0) {
+            av_log(nullptr, AV_LOG_ERROR, "Error while feeding the audio filtergraph\n");
+            break;
+          }
+        } else {
+          process_frame = &frame;
         }
 
         /* pull filtered audio from the filtergraph */
         while(true) {
-          ret = av_buffersink_get_frame(buffersink_ctx, filter_frame.get());
-          if(ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
-          if(ret < 0) {
-            av_log(nullptr, AV_LOG_ERROR, "Error while av_buffersink_get_frame\n");
-            goto end;
+          if(enable_filter_graph) {
+            ret = av_buffersink_get_frame(buffersink_ctx, filter_frame.get());
+            if(ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
+            if(ret < 0) {
+              av_log(nullptr, AV_LOG_ERROR, "Error while av_buffersink_get_frame\n");
+              goto end;
+            }
           }
 
+          AVFrame* filter_frame = process_frame->get(); // TODO(Assasans): Shadowing...
           out_frame->format = AV_SAMPLE_FMT_FLT;
           out_frame->ch_layout = AV_CHANNEL_LAYOUT_STEREO;
           out_frame->sample_rate = 48000;
@@ -348,7 +359,7 @@ public:
             }
           }
 
-          if((ret = swr_convert_frame(swr.get(), out_frame.get(), filter_frame.get())) < 0) {
+          if((ret = swr_convert_frame(swr.get(), out_frame.get(), filter_frame)) < 0) {
             av_log(nullptr, AV_LOG_ERROR, "Error while swr_convert_frame\n");
             goto end;
           }
@@ -359,7 +370,11 @@ public:
 
           // print_frame(out_frame.get());
           // av_frame_unref(out_frame.get());
-          av_frame_unref(filter_frame.get());
+          av_frame_unref(filter_frame);
+
+          if(!enable_filter_graph) {
+            break;
+          }
         }
         av_frame_unref(frame.get());
       }
@@ -414,6 +429,23 @@ public:
     av_frame_unref(out_frame.get());
     return 0;
   }
+
+  int set_enable_filter_graph(bool enable) {
+    int res;
+    enable_filter_graph = enable;
+
+    if((res = swr_config_frame(
+      swr.get(),
+      out_frame.get(),
+      filter_frame.get()
+    )) < 0) {
+      av_log(nullptr, AV_LOG_ERROR, "Error while swr_config_frame\n");
+      goto end;
+    }
+
+    end:
+    return res;
+  }
 };
 
 DLL_EXPORT Decoder *decoder_alloc() {
@@ -442,6 +474,10 @@ DLL_EXPORT int decoder_flush_frame(Decoder *decoder, float *&data, int &data_len
 
 DLL_EXPORT int decoder_unref_frame(Decoder *decoder) {
   return decoder->unref_frame();
+}
+
+DLL_EXPORT int decoder_set_enable_filter_graph(Decoder *decoder, bool enable) {
+  return decoder->set_enable_filter_graph(enable);
 }
 
 #endif
