@@ -43,7 +43,7 @@ impl CommandHandler for FiltersCommand {
         let handle = handle.as_ref().unwrap();
         let handle = handle.as_any();
         if let Some(handle) = handle.downcast_ref::<FFmpegSampleProviderHandle>() {
-          handle.init_filters(&filters);
+          handle.init_filters(&filters).unwrap();
         }
       }
 

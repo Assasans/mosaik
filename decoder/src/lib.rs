@@ -10,6 +10,19 @@ mod ffi {
   include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
+pub type RawError = i32;
+
+macro_rules! result_zero {
+  ($result:expr) => {{
+    let result = $result;
+    if result == 0 {
+      Ok(())
+    } else {
+      Err(result)
+    }
+  }};
+}
+
 pub struct Decoder {
   decoder: *mut ffi::Decoder
 }
@@ -25,18 +38,18 @@ impl Decoder {
     }
   }
 
-  pub fn open_input(&self, path: &str) {
+  pub fn open_input(&mut self, path: &str) -> Result<(), RawError> {
     let path = CString::new(path).unwrap();
-    unsafe {
-      ffi::decoder_open_input(self.decoder, path.as_ptr());
-    }
+    result_zero!(unsafe {
+      ffi::decoder_open_input(self.decoder, path.as_ptr())
+    })
   }
 
-  pub fn init_filters(&mut self, filters_descr: &str) {
+  pub fn init_filters(&mut self, filters_descr: &str) -> Result<(), RawError> {
     let filters_descr = CString::new(filters_descr).unwrap();
-    unsafe {
-      ffi::decoder_init_filters(self.decoder, filters_descr.as_ptr());
-    }
+    result_zero!(unsafe {
+      ffi::decoder_init_filters(self.decoder, filters_descr.as_ptr())
+    })
   }
 
   pub fn read_frame(&mut self, is_flush: bool) -> Option<Vec<f32>> {
@@ -61,10 +74,10 @@ impl Decoder {
     Some(data)
   }
 
-  pub fn unref_frame(&self) {
-    unsafe {
-      ffi::decoder_unref_frame(self.decoder);
-    }
+  pub fn unref_frame(&self) -> Result<(), RawError> {
+    result_zero!(unsafe {
+      ffi::decoder_unref_frame(self.decoder)
+    })
   }
 }
 

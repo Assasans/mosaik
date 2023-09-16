@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 use tracing::debug;
-use decoder::Decoder;
+use decoder::{Decoder, RawError};
 use voice::provider::{SampleProvider, SampleProviderHandle};
 
 pub struct FFmpegSampleProvider {
@@ -17,14 +17,14 @@ impl FFmpegSampleProvider {
     }
   }
 
-  pub fn open(&mut self, path: &str) {
+  pub fn open(&mut self, path: &str) -> Result<(), RawError> {
     let mut decoder = self.decoder.lock().unwrap();
-    decoder.open_input(path);
+    decoder.open_input(path)
   }
 
-  pub fn init_filters(&mut self, description: &str) {
+  pub fn init_filters(&mut self, description: &str) -> Result<(), RawError> {
     let mut decoder = self.decoder.lock().unwrap();
-    decoder.init_filters(description);
+    decoder.init_filters(description)
   }
 }
 
@@ -69,8 +69,8 @@ impl SampleProviderHandle for FFmpegSampleProviderHandle {
 }
 
 impl FFmpegSampleProviderHandle {
-  pub fn init_filters(&self, description: &str) {
+  pub fn init_filters(&self, description: &str) -> Result<(), RawError> {
     let mut decoder = self.decoder.lock().unwrap();
-    decoder.init_filters(description);
+    decoder.init_filters(description)
   }
 }
