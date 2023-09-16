@@ -499,7 +499,7 @@ impl VoiceConnection {
           consumer.pop_slice(&mut data);
           // debug!("sending {} samples", packet_size);
 
-          if consumer.free_len() >= consumer.len() / 2 {
+          if consumer.free_len() >= consumer.capacity() / 2 {
             // debug!("sample buffer drained");
             _ = dtx.try_send(());
           }
