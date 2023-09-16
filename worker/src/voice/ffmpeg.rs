@@ -25,17 +25,16 @@ impl FFmpegSampleProvider {
 }
 
 impl SampleProvider for FFmpegSampleProvider {
-  fn get_samples(&mut self, samples: &mut [f32]) -> Option<usize> {
+  fn get_samples(&mut self) -> Option<Vec<f32>> {
     match self.decoder.read_frame(self.flushing) {
       Some(read) => {
-        samples[..read.len()].copy_from_slice(&read);
-        Some(read.len())
+        Some(read)
       },
       None => {
         if !self.flushing {
           debug!("flushing decoder...");
           self.flushing = true;
-          return Some(0); // Request retry
+          return Some(Vec::new()); // Request retry
         }
 
         None

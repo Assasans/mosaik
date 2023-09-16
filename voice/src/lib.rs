@@ -352,7 +352,14 @@ impl VoiceConnection {
 
       select! {
         event = read.recv_async() => {
-          let event = event?;
+          let event = match event {
+            Ok(event) => event,
+            Err(error) => {
+              debug!("websocket read error: {:?}", error);
+              break;
+            }
+          };
+
           match TryInto::<GatewayEvent>::try_into(event) {
             Ok(event) => {
               debug!("<< {:?}", event);
@@ -365,7 +372,14 @@ impl VoiceConnection {
         }
 
         frame = close.recv_async() => {
-          let frame = frame?;
+          let frame = match frame {
+            Ok(frame) => frame,
+            Err(error) => {
+              debug!("websocket close channel error: {:?}", error);
+              break;
+            }
+          };
+
           info!(?frame, "voice gateway closed");
           if let Some(frame) = frame {
             let code: GatewayCloseCode = frame.code.into();
@@ -411,33 +425,30 @@ impl VoiceConnection {
     };
 
     tokio::task::spawn_blocking(move || {
-      let mut data = vec![0f32; packet_size * 6];
-
       let mut sample_provider_lock = clone.sample_provider.blocking_lock();
-      let sample_provider = sample_provider_lock.as_mut().context("no sample provider set").unwrap();
 
       'packet: loop {
+        let sample_provider = sample_provider_lock.as_mut().context("no sample provider set").unwrap();
+
         if producer.len() >= producer.capacity() / 2 {
           // Ready to play, filled
           _ = stx.try_send(());
         }
 
-        if producer.free_len() < data.len() {
-          // warn!("sample buffer filled, blocking...");
-          drx.recv().unwrap();
-          continue;
-        }
+        match sample_provider.get_samples() {
+          Some(data) => {
+            if producer.free_len() < data.len() {
+              warn!("jitter buffer filled ({} < {}), blocking sample provider loop...", producer.free_len(), data.len());
+              drx.recv().unwrap();
+            }
 
-        match sample_provider.get_samples(&mut data) {
-          Some(size) => {
-            producer.push_slice(&data[..size]);
+            producer.push_slice(&data);
             if producer.len() >= packet_size {
               // debug!("wake sender");
               _ = tx.try_send(());
             }
-            // got += size;
 
-            // debug!("got {} samples", size);
+            debug!("got {} samples", data.len());
           }
           None => {
             debug!("got sample provider eof");
@@ -485,7 +496,7 @@ impl VoiceConnection {
           consumer.pop_slice(&mut data);
           // debug!("sending {} samples", packet_size);
 
-          if consumer.free_len() >= packet_size * 6 {
+          if consumer.free_len() >= consumer.len() / 2 {
             // debug!("sample buffer drained");
             _ = dtx.try_send(());
           }
