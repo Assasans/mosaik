@@ -32,3 +32,4 @@ ringbuf = "0.3.3"
 pin-project = "1.1.0"
 decoder = { path = "../decoder" }
 debug-ignore = "1.0.5"
+reqwest = { version = "0.11.20", features = ["json"] }
