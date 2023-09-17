@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::sync::{Arc, Mutex};
+use anyhow::anyhow;
 use tracing::debug;
 use decoder::{Decoder, RawError};
 use voice::provider::{SampleProvider, SampleProviderHandle};
@@ -17,9 +18,9 @@ impl FFmpegSampleProvider {
     }
   }
 
-  pub fn open(&mut self, path: &str) -> Result<(), RawError> {
+  pub fn open(&mut self, path: &str) -> anyhow::Result<()> {
     let mut decoder = self.decoder.lock().unwrap();
-    decoder.open_input(path)
+    decoder.open_input(path).map_err(|code| anyhow!("ffmpeg error {}", code))
   }
 
   pub fn init_filters(&mut self, description: &str) -> Result<(), RawError> {

@@ -16,7 +16,7 @@ pub struct PlayCommand;
 
 #[async_trait]
 impl CommandHandler for PlayCommand {
-  async fn run(&self, state: State, interaction: Box<InteractionCreate>) -> Result<()> {
+  async fn run(&self, state: State, interaction: &InteractionCreate) -> Result<()> {
     reply!(state, interaction, &interaction_response!(
       DeferredChannelMessageWithSource,
       content("Playing...")
@@ -30,10 +30,17 @@ impl CommandHandler for PlayCommand {
       .context("no source")?; // TODO(Assasans)
 
     let voice_state = state.cache.voice_state(interaction.member.as_ref().unwrap().user.as_ref().unwrap().id, guild_id);
-    let channel_id = get_option_as!(command, "channel", CommandOptionValue::Channel)
+    let channel_id = match get_option_as!(command, "channel", CommandOptionValue::Channel)
       .map(|it| *it.unwrap())
-      .or(voice_state.map(|it| it.channel_id()))
-      .unwrap();
+      .or(voice_state.map(|it| it.channel_id())) {
+      Some(value) => value,
+      None => {
+        update_reply!(state, interaction)
+          .content(Some("You are not in a voice channel"))?
+          .await?;
+        return Ok(());
+      }
+    };
 
     state.sender.command(&UpdateVoiceState::new(guild_id, channel_id, true, false))?;
     println!("connecting");

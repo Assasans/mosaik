@@ -14,5 +14,5 @@ use crate::State;
 
 #[async_trait]
 pub trait CommandHandler: Sync {
-  async fn run(&self, state: State, interaction: Box<InteractionCreate>) -> Result<()>;
+  async fn run(&self, state: State, interaction: &InteractionCreate) -> Result<()>;
 }

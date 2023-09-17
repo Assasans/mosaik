@@ -13,7 +13,7 @@ pub struct FiltersCommand;
 
 #[async_trait]
 impl CommandHandler for FiltersCommand {
-  async fn run(&self, state: State, interaction: Box<InteractionCreate>) -> Result<()> {
+  async fn run(&self, state: State, interaction: &InteractionCreate) -> Result<()> {
     reply!(state, interaction, &interaction_response!(
       DeferredChannelMessageWithSource,
       content("Updating...")

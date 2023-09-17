@@ -12,6 +12,8 @@ use twilight_cache_inmemory::InMemoryCache;
 use twilight_util::builder::{command::StringBuilder, InteractionResponseDataBuilder};
 
 use std::{collections::HashMap, env, error::Error, future::Future, sync::Arc};
+use std::fmt::{Debug, Write};
+use regex::Regex;
 use tokio::sync::{Mutex, RwLock};
 use twilight_gateway::{Shard, Event, Intents, ShardId, MessageSender};
 use twilight_http::Client as HttpClient;
@@ -157,14 +159,61 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
 
     if let Event::InteractionCreate(interaction) = event {
       let command = try_unpack!(interaction.data.as_ref().context("no interaction data")?, InteractionData::ApplicationCommand)?;
+      let command_name = command.name.clone();
 
       match handlers.get(command.name.as_str()) {
         Some(handler) => {
           let cloned = state.clone();
+          let state = state.clone();
           tokio::spawn(async move {
-            let result = handler.run(cloned, interaction).await;
+            let result = handler.run(cloned, interaction.as_ref()).await;
             if let Err(error) = result {
               tracing::debug!("handler error: {:?}", error);
+
+              let mut fmt = String::new();
+
+              let backtrace = error.backtrace().to_string();
+              let regex = Regex::new(r"(\d+): (.+)\n\s*at (.+)(?::(\d+):(\d+))+?").unwrap();
+
+              let mut skipped = 0;
+              for capture in regex.captures_iter(&backtrace) {
+                let index = capture.get(1).unwrap().as_str().parse::<i32>().unwrap();
+                let frame = capture.get(2).unwrap().as_str();
+                let file = capture.get(3).unwrap().as_str();
+                let line = capture.get(4).map(|it| it.as_str()).unwrap_or("?");
+                let column = capture.get(5).map(|it| it.as_str()).unwrap_or("?");
+
+                if index >= 13 {
+                  skipped += 1;
+                  continue;
+                }
+
+                let color = if !file.contains("/rustc/") && !file.contains("/.cargo/") {
+                  "33"
+                } else {
+                  "30"
+                };
+                fmt.write_fmt(format_args!("\u{001b}[2;34m{index:>2}: \u{001b}[2;{color}m{frame}\u{001b}[0m")).unwrap();
+                fmt.push_str("\n");
+                if !file.contains("/rustc/") && !file.contains("/.cargo/") {
+                  fmt.write_fmt(format_args!("    at \u{001b}[1;2m{file}\u{001b}[0m:{line}:{column}")).unwrap();
+                  fmt.push_str("\n");
+                }
+              }
+
+              if skipped > 0 {
+                fmt.write_fmt(format_args!("    \u{001b}[2;32m{skipped} more frames...\u{001b}[0m")).unwrap();
+              }
+
+              println!("{}", fmt);
+              let r = format!("Handler `{}` error: {}\n```ansi\n{}```", command_name, error, fmt);
+              println!("{} / {}", r.len(), r.chars().count());
+              state
+                .http
+                .interaction(state.application_id)
+                .update_response(&interaction.token)
+                .content(Some(&r)).unwrap()
+                .await.unwrap();
             }
           });
         },
