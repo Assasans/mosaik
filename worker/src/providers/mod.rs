@@ -2,11 +2,13 @@ mod metadata;
 mod ffmpeg;
 mod yt_dlp;
 mod sberzvuk;
+mod vk;
 
 pub use metadata::*;
 pub use ffmpeg::*;
 pub use yt_dlp::*;
 pub use sberzvuk::*;
+pub use vk::*;
 
 use std::fmt::Debug;
 use anyhow::Result;

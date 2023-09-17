@@ -8,7 +8,7 @@ use twilight_model::{gateway::payload::{incoming::InteractionCreate, outgoing::U
 use voice::VoiceConnection;
 
 use crate::{try_unpack, State, interaction_response, get_option_as, player::Player, reply, update_reply, providers::{MediaProvider, FFmpegMediaProvider}};
-use crate::providers::{SberzvukMediaProvider, YtDlpMediaProvider};
+use crate::providers::{SberzvukMediaProvider, VkMediaProvider, YtDlpMediaProvider};
 
 use super::CommandHandler;
 
@@ -67,6 +67,13 @@ impl CommandHandler for PlayCommand {
       "ffmpeg" => Box::new(FFmpegMediaProvider::new(input.to_owned())),
       "yt-dlp" => Box::new(YtDlpMediaProvider::new(input.to_owned())),
       "zvuk" => Box::new(SberzvukMediaProvider::new(input.parse::<i64>()?)),
+      "vk" => {
+        let (owner_id, track_id) = input.split_once('_').unwrap();
+        Box::new(VkMediaProvider::new(
+          owner_id.parse::<i64>()?,
+          track_id.parse::<i64>()?
+        ))
+      },
       _ => todo!("media provider {} is not implemented", provider)
     };
     provider.init().await?;
