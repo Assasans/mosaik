@@ -4,6 +4,7 @@ use std::time::Duration;
 pub enum MediaMetadata {
   Id(String),
   Title(String),
+  Url(String),
   Thumbnail(String),
   Description(String),
   Duration(Duration),

@@ -2,6 +2,7 @@ use std::process::Stdio;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use serde_json::Value;
 use tokio::process::Command;
 use tracing::debug;
 
@@ -18,6 +19,18 @@ impl YtDlpMediaProvider {
   pub fn new(query: String) -> Self {
     Self { query }
   }
+}
+
+macro_rules! metadata {
+  ($($kind:ident => $block:block),*$(,)?) => {{
+    let mut metadata = Vec::new();
+    $(
+      if let Some(value) = $block {
+        metadata.push(MediaMetadata::$kind(value.to_owned()));
+      }
+    )*
+    metadata
+  }};
 }
 
 #[async_trait]
@@ -44,7 +57,21 @@ impl MediaProvider for YtDlpMediaProvider {
   }
 
   async fn get_metadata(&self) -> Result<Vec<MediaMetadata>> {
-    // TODO: Implement the logic to extract metadata from the file
-    Ok(vec![])
+    let output = Command::new("yt-dlp")
+      .args(&["--no-download", "--print-json", &self.query])
+      .stdout(Stdio::piped())
+      .stderr(Stdio::piped())
+      .stdin(Stdio::piped())
+      .spawn()?
+      .wait_with_output().await?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let data: Value = serde_json::from_str(&stdout)?;
+    debug!("data: {:#?}", data);
+
+    Ok(metadata! {
+      Id => { data["id"].as_str() },
+      Title => { data["title"].as_str() },
+      Url => { data["original_url"].as_str() },
+    })
   }
 }
