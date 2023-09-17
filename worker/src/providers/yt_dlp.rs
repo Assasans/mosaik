@@ -56,6 +56,12 @@ impl MediaProvider for YtDlpMediaProvider {
     let mut formats = serde_json::from_value::<Vec<Format>>(data["formats"].clone())?;
     formats.sort_by(|a, b| {
       Ordering::Equal
+        // Prefer format with audio
+        .then_with(|| {
+          let a = a.acodec.as_ref().unwrap_or(&"".to_owned()) != &none;
+          let b = b.acodec.as_ref().unwrap_or(&"".to_owned()) != &none;
+          b.cmp(&a)
+        })
         // Prefer Opus
         .then_with(|| {
           let a = match a.acodec {
