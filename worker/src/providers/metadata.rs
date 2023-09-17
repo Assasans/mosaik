@@ -10,3 +10,17 @@ pub enum MediaMetadata {
   Duration(Duration),
   ViewCount(u64)
 }
+
+macro_rules! metadata {
+  ($($kind:ident => $block:block),*$(,)?) => {{
+    let mut metadata = Vec::new();
+    $(
+      if let Some(value) = $block {
+        metadata.push(MediaMetadata::$kind(value.to_owned()));
+      }
+    )*
+    metadata
+  }};
+}
+
+pub(crate) use metadata;

@@ -63,11 +63,12 @@ impl CommandHandler for PlayCommand {
     }
 
     let (provider, input) = source.split_once(':').context("invalid source")?;
-    let provider: Box<dyn MediaProvider> = match provider {
+    let mut provider: Box<dyn MediaProvider> = match provider {
       "ffmpeg" => Box::new(FFmpegMediaProvider::new(input.to_owned())),
       "yt-dlp" => Box::new(YtDlpMediaProvider::new(input.to_owned())),
       _ => todo!("media provider {} is not implemented", provider)
     };
+    provider.init().await?;
 
     let sample_provider = provider.get_sample_provider().await?;
     *connection.sample_provider_handle.lock().await = Some(sample_provider.get_handle());

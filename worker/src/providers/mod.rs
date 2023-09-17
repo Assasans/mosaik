@@ -14,6 +14,10 @@ use voice::provider::SampleProvider;
 
 #[async_trait]
 pub trait MediaProvider: Sync + Send + Debug {
+  async fn init(&mut self) -> Result<()> {
+    Ok(())
+  }
+
   async fn get_sample_provider(&self) -> Result<Box<dyn SampleProvider>>;
   async fn get_metadata(&self) -> Result<Vec<MediaMetadata>>;
 }

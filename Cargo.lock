@@ -316,6 +316,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2e66c9d817f1720209181c316d28635c050fa304f9c79e47a520882661b7308"
 
 [[package]]
+name = "debug-ignore"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffe7ed1d93f4553003e20b629abe9085e1e81b1429520f897f8f8860bc6dfc21"
+
+[[package]]
 name = "decoder"
 version = "0.1.0"
 dependencies = [
@@ -2487,6 +2493,7 @@ dependencies = [
  "async-channel",
  "async-trait",
  "byteorder",
+ "debug-ignore",
  "decoder",
  "flume",
  "futures-util",
