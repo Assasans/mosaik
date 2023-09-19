@@ -1,75 +1,73 @@
 pub mod track;
+pub mod queue;
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-use anyhow::{Result, Context};
+use anyhow::{Result, Context, anyhow};
 use futures_util::StreamExt;
 use tracing::debug;
 use twilight_gateway::{Event, EventType};
 use twilight_model::{id::{Id, marker::{GuildMarker, ChannelMarker}}, gateway::payload::outgoing::UpdateVoiceState};
 
-use voice::{VoiceConnectionOptions, VoiceConnection};
+use voice::{VoiceConnectionOptions, VoiceConnection, VoiceConnectionState};
+use crate::player::queue::Queue;
 use crate::State;
-use self::track::Track;
 
-#[derive(Debug)]
-pub enum RepeatType {
-  None,
-  Player,
-  Track
-}
-
-#[derive(Debug)]
-pub enum PlayerState {
-  Stop,
-  Pause,
-  Play
+pub enum PlayerEvent {
+  TrackFinished(usize)
 }
 
 pub struct Player {
   pub state: State,
-  pub connection: Option<Arc<VoiceConnection>>,
+  pub connection: Arc<VoiceConnection>,
 
-  pub guild_id: Id<GuildMarker>,
-  pub channel_id: Option<Id<ChannelMarker>>,
+  pub guild_id: RwLock<Id<GuildMarker>>,
+  pub channel_id: RwLock<Option<Id<ChannelMarker>>>,
 
-  pub player_state: PlayerState,
-  pub repeat_type: RepeatType,
+  pub queue: Arc<Queue>,
 
-  pub tracks: Vec<Track>,
-  pub current: usize
+  pub tx: flume::Sender<PlayerEvent>,
+  pub rx: flume::Receiver<PlayerEvent>
 }
 
 impl Player {
   pub fn new(state: State, guild_id: Id<GuildMarker>) -> Self {
+    let (tx, rx) = flume::bounded(16);
+
     Self {
       state,
-      connection: None,
+      connection: Arc::new(VoiceConnection::new().unwrap()),
 
-      guild_id,
-      channel_id: None,
+      guild_id: RwLock::new(guild_id),
+      channel_id: RwLock::new(None),
 
-      player_state: PlayerState::Stop,
-      repeat_type: RepeatType::None,
+      queue: Queue::new(),
 
-      tracks: Vec::new(),
-      current: 0
+      tx,
+      rx
     }
   }
 
-  pub fn set_channel(&mut self, channel_id: Id<ChannelMarker>) {
-    self.channel_id = Some(channel_id);
+  pub fn set_channel(&self, channel_id: Id<ChannelMarker>) {
+    *self.channel_id.write().unwrap() = Some(channel_id);
   }
 
-  pub async fn connect(&mut self) -> Result<()> {
-    let channel_id = self.channel_id.context("no voice channel")?;
+  pub fn get_channel(&self) -> Option<Id<ChannelMarker>> {
+    *self.channel_id.read().unwrap()
+  }
 
-    self.state.sender.command(&UpdateVoiceState::new(self.guild_id, channel_id, true, false))?;
+  pub fn get_guild(&self) -> Id<GuildMarker> {
+    *self.guild_id.read().unwrap()
+  }
+
+  pub async fn connect(self: &Arc<Self>) -> Result<()> {
+    let channel_id = self.get_channel().context("no voice channel")?;
+    self.state.sender.command(&UpdateVoiceState::new(self.get_guild(), channel_id, true, false))?;
 
     let mut voice_state = None;
     let mut voice_server = None;
 
-    let mut stream = self.state.standby.wait_for_stream(self.guild_id, |event: &Event| match event.kind() {
+    let mut stream = self.state.standby.wait_for_stream(self.get_guild(), |event: &Event| match event.kind() {
       EventType::VoiceStateUpdate => true,
       EventType::VoiceServerUpdate => true,
       _ => false
@@ -96,73 +94,62 @@ impl Player {
 
     let options = VoiceConnectionOptions {
       user_id: user.id.get(),
-      guild_id: self.guild_id.get(),
+      guild_id: self.get_guild().get(),
       bitrate: channel.bitrate,
       endpoint: voice_server.endpoint.context("no voice endpoint")?.to_owned(),
       token: voice_server.token.to_owned(),
       session_id: voice_state.session_id.to_owned()
     };
-    let connection = Arc::new(VoiceConnection::new()?);
-    connection.connect(options).await?;
+    self.connection.connect(options).await?;
 
-    let connection_weak = Arc::downgrade(&connection);
+    let connection_weak = Arc::downgrade(&self.connection);
     tokio::spawn(async move {
       VoiceConnection::run_ws_loop(connection_weak).await.unwrap()
     });
 
-    self.connection = Some(connection);
+    let cloned = self.clone();
+    let rx = self.rx.clone();
+    tokio::spawn(async move {
+      loop {
+        match rx.recv_async().await.unwrap() {
+          PlayerEvent::TrackFinished(position) => {
+            let next = {
+              let mode = cloned.queue.mode.read().unwrap();
+              mode.seek(1, false)
+            };
+            debug!("track {} finished, next {:?}", position, next);
+
+            if let Some(next) = next {
+              cloned.queue.set_position(next);
+              cloned.play().await.unwrap();
+            }
+          }
+        }
+      }
+    });
 
     Ok(())
   }
 
-  pub async fn play(&mut self, index: usize) -> Result<&Track> {
-    todo!();
-    let track = self.tracks.get(index).context("no track")?;
-    self.current = index;
-
-    Ok(track)
-  }
-
-  pub fn get_current_track(&self) -> Option<&Track> {
-    self.tracks.get(self.current)
-  }
-
-  pub fn get_next_track(&self) -> Option<&Track> {
-    match self.repeat_type {
-      RepeatType::None => self.tracks.get(self.current + 1),
-      RepeatType::Track => self.get_current_track(),
-      RepeatType::Player => {
-        if !self.tracks.is_empty() {
-          let index = if self.current == self.tracks.len() - 1 {
-            0
-          } else {
-            self.current
-          };
-
-          self.tracks.get(index + 1)
-        } else {
-          None
-        }
-      }
+  pub async fn play(self: &Arc<Self>) -> Result<()> {
+    if self.connection.state.get() == VoiceConnectionState::Playing {
+      return Err(anyhow!("invalid player state (playing)"));
     }
-  }
 
-  pub fn get_previous_track(&self) -> Option<&Track> {
-    match self.repeat_type {
-      RepeatType::Player => {
-        if !self.tracks.is_empty() {
-          let index = if self.current == 0 {
-            self.tracks.len()
-          } else {
-            self.current
-          };
+    debug!("playing track {} / {}", self.queue.position(), self.queue.len());
+    let track = self.queue.get_current().upgrade().unwrap();
 
-          self.tracks.get(index - 1)
-        } else {
-          None
-        }
-      },
-      _ => self.tracks.get(self.current - 1),
-    }
+    let sample_provider = track.provider.get_sample_provider().await?;
+    *self.connection.sample_provider_handle.lock().await = Some(sample_provider.get_handle());
+    *self.connection.sample_provider.lock().await = Some(sample_provider);
+
+    let x = self.clone();
+    let clone = self.connection.clone();
+    tokio::spawn(async move {
+      VoiceConnection::run_udp_loop(clone).await.unwrap();
+      x.tx.send_async(PlayerEvent::TrackFinished(x.queue.position())).await.unwrap();
+    });
+
+    Ok(())
   }
 }

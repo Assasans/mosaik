@@ -205,6 +205,10 @@ impl VoiceConnection {
     Ok(())
   }
 
+  pub fn is_connected(&self) -> bool {
+    self.state.get() != VoiceConnectionState::Disconnected
+  }
+
   async fn discover_udp_ip(&self, ready: &Ready) -> Result<IpDiscoveryResult> {
     let mut udp_guard = self.udp.lock().await;
     let udp = udp_guard.as_mut().context("no voice UDP socket")?;
@@ -413,7 +417,7 @@ impl VoiceConnection {
 
   pub async fn run_udp_loop(me: Arc<Self>) -> Result<()> {
     let packet_size = TIMESTAMP_STEP * CHANNEL_COUNT;
-    let buffer = HeapRb::<f32>::new(SAMPLE_RATE * 2); // TODO(Assasans): Calculate buffer size
+    let buffer = HeapRb::<f32>::new(SAMPLE_RATE * 3); // TODO(Assasans): Calculate buffer size
     let (mut producer, mut consumer) = buffer.split();
     let (stx, srx) = flume::bounded(0);
     let (tx, rx) = flume::bounded(0);
@@ -451,7 +455,7 @@ impl VoiceConnection {
               _ = tx.try_send(());
             }
 
-            debug!("got {} samples", data.len());
+            // debug!("got {} samples", data.len());
           }
           None => {
             debug!("got sample provider eof");

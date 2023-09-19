@@ -28,15 +28,12 @@ impl CommandHandler for PauseCommand {
         .await?;
       return Ok(());
     };
-    let player = player.lock().await;
 
-    if let Some(connection) = &player.connection {
-      connection.set_paused(!connection.is_paused())?;
+    player.connection.set_paused(!player.connection.is_paused())?;
 
-      update_reply!(state, interaction)
-        .content(Some("Ok"))?
-        .await?;
-    }
+    update_reply!(state, interaction)
+      .content(Some("Ok"))?
+      .await?;
 
     Ok(())
   }

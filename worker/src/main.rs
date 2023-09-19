@@ -29,7 +29,7 @@ pub struct StateRef {
   http: HttpClient,
   cache: InMemoryCache,
   application_id: Id<ApplicationMarker>,
-  players: RwLock<HashMap<Id<GuildMarker>, Arc<Mutex<Player>>>>,
+  players: RwLock<HashMap<Id<GuildMarker>, Arc<Player>>>,
   standby: Standby,
 }
 
