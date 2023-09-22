@@ -24,3 +24,15 @@ macro_rules! metadata {
 }
 
 pub(crate) use metadata;
+
+// TODO(Assasans): Generalize for non-metadata enums
+macro_rules! get_metadata {
+  ($metadata:expr, $matcher:pat => $result:expr) => {
+    $metadata.iter().find_map(|item| match item {
+      $matcher => Some($result),
+      _ => None
+    })
+  };
+}
+
+pub(crate) use get_metadata;
