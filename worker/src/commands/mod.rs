@@ -1,10 +1,12 @@
 mod play;
 mod pause;
 mod filters;
+mod queue;
 
 pub use play::*;
 pub use pause::*;
 pub use filters::*;
+pub use queue::*;
 
 use anyhow::Result;
 use async_trait::async_trait;
