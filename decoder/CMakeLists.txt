@@ -29,5 +29,10 @@ endif()
 
 target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::FFMPEG)
 
+target_compile_options(${PROJECT_NAME} PRIVATE
+  $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>
+)
+
 # target_compile_options(${PROJECT_NAME} PRIVATE -fsanitize=address)
 # target_link_options(${PROJECT_NAME} PRIVATE -fsanitize=address)
