@@ -104,6 +104,7 @@ private:
   std::unique_ptr<SwrContext, SwrContextDeleter> swr;
 
   int audio_stream_index = -1;
+  uint64_t pts = 0;
 
 public:
   int init_filters(const char *filters_descr) {
@@ -364,6 +365,9 @@ public:
             goto end;
           }
 
+          pts += out_frame->nb_samples;
+          // printf("increment pts by %d -> %ld\n", out_frame->nb_samples, pts);
+
           const int n = out_frame->nb_samples * out_frame->ch_layout.nb_channels;
           data = reinterpret_cast<float *>(out_frame->data[0]);
           data_length = n;
@@ -402,6 +406,8 @@ public:
       goto end;
     }
 
+    pts += out_frame->nb_samples;
+
     {
       const int n = out_frame->nb_samples * out_frame->ch_layout.nb_channels;
       if(n < 1) {
@@ -428,6 +434,20 @@ public:
   int unref_frame() {
     av_frame_unref(out_frame.get());
     return 0;
+  }
+
+  uint64_t get_frame_pts() {
+    if(out_frame->pts != AV_NOPTS_VALUE) {
+      // TODO(Assasans): Not tested
+      AVRational time_base = out_frame->time_base;
+      return out_frame->pts * 1000 * time_base.num / time_base.den;
+    }
+
+    const int sample_rate = 48000;
+    // printf("get pts %ld, sample rate %d\n", pts, sample_rate);
+    // printf("%lu\n", pts * 1000 / sample_rate);
+
+    return pts * 1000 / sample_rate;
   }
 
   int set_enable_filter_graph(bool enable) {
@@ -474,6 +494,10 @@ DLL_EXPORT int decoder_flush_frame(Decoder *decoder, float *&data, int &data_len
 
 DLL_EXPORT int decoder_unref_frame(Decoder *decoder) {
   return decoder->unref_frame();
+}
+
+DLL_EXPORT uint64_t decoder_get_frame_pts(Decoder *decoder) {
+  return decoder->get_frame_pts();
 }
 
 DLL_EXPORT int decoder_set_enable_filter_graph(Decoder *decoder, bool enable) {

@@ -16,7 +16,7 @@ use std::{
   sync::{Arc, Weak},
   time::{Duration, Instant}
 };
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use opus::{Encoder, Bitrate, Channels, Application};
 use anyhow::{Result, anyhow, Context};
 use discortp::{
@@ -113,7 +113,8 @@ pub struct VoiceConnection {
   pub sample_provider_handle: Mutex<Option<Box<dyn SampleProviderHandle>>>,
   pub state: StateFlow<VoiceConnectionState>,
   paused: StateFlow<bool>,
-  silence_frames_left: AtomicU8
+  silence_frames_left: AtomicU8,
+  pub jitter_buffer_size: AtomicUsize
 }
 
 impl VoiceConnection {
@@ -129,7 +130,8 @@ impl VoiceConnection {
       sample_provider_handle: Mutex::new(None),
       state: StateFlow::new(VoiceConnectionState::Disconnected),
       paused: StateFlow::new(false),
-      silence_frames_left: AtomicU8::new(0)
+      silence_frames_left: AtomicU8::new(0),
+      jitter_buffer_size: AtomicUsize::new(0)
     })
   }
 
@@ -450,6 +452,7 @@ impl VoiceConnection {
             }
 
             producer.push_slice(&data);
+            clone.jitter_buffer_size.fetch_add(data.len(), Ordering::Relaxed);
             if producer.len() >= packet_size {
               // debug!("wake sender");
               _ = tx.try_send(());
@@ -501,6 +504,7 @@ impl VoiceConnection {
         } else {
           let mut data = vec![0f32; packet_size];
           consumer.pop_slice(&mut data);
+          me.jitter_buffer_size.fetch_sub(data.len(), Ordering::Relaxed);
           // debug!("sending {} samples", packet_size);
 
           if consumer.free_len() >= consumer.capacity() / 2 {

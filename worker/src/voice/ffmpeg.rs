@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use anyhow::anyhow;
 use tracing::debug;
 use decoder::{Decoder, RawError};
@@ -60,7 +61,7 @@ impl SampleProvider for FFmpegSampleProvider {
 }
 
 pub struct FFmpegSampleProviderHandle {
-  pub decoder: Arc<Mutex<Decoder>>,
+  pub decoder: Arc<Mutex<Decoder>>
 }
 
 impl SampleProviderHandle for FFmpegSampleProviderHandle {
@@ -78,5 +79,10 @@ impl FFmpegSampleProviderHandle {
   pub fn init_filters(&self, description: &str) -> Result<(), RawError> {
     let mut decoder = self.decoder.lock().unwrap();
     decoder.init_filters(description)
+  }
+
+  pub fn get_frame_pts(&self) -> Result<Duration, RawError> {
+    let decoder = self.decoder.lock().unwrap();
+    Ok(Duration::from_millis(decoder.get_frame_pts()))
   }
 }

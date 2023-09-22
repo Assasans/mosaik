@@ -85,6 +85,12 @@ impl Decoder {
       ffi::decoder_unref_frame(self.decoder)
     })
   }
+
+  pub fn get_frame_pts(&self) -> u64 {
+    unsafe {
+      ffi::decoder_get_frame_pts(self.decoder)
+    }
+  }
 }
 
 impl Drop for Decoder {
