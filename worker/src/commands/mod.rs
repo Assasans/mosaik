@@ -2,11 +2,13 @@ mod play;
 mod pause;
 mod filters;
 mod queue;
+mod debug;
 
 pub use play::*;
 pub use pause::*;
 pub use filters::*;
 pub use queue::*;
+pub use debug::*;
 
 use anyhow::Result;
 use async_trait::async_trait;

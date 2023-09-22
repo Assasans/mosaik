@@ -37,7 +37,7 @@ impl CommandHandler for QueueCommand {
     let mut fmt = String::new();
     let mut index = 0;
 
-        let handle = player.connection.sample_provider_handle.lock().await;
+    let handle = player.connection.sample_provider_handle.lock().await;
     let handle = handle.as_ref().unwrap();
     let handle = handle.as_any();
     if let Some(handle) = handle.downcast_ref::<FFmpegSampleProviderHandle>() {
