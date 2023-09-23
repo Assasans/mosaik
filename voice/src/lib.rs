@@ -16,7 +16,7 @@ use std::{
   sync::{Arc, Weak},
   time::{Duration, Instant}
 };
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use opus::{Encoder, Bitrate, Channels, Application};
 use anyhow::{Result, anyhow, Context};
 use discortp::{
@@ -114,7 +114,8 @@ pub struct VoiceConnection {
   pub state: StateFlow<VoiceConnectionState>,
   paused: StateFlow<bool>,
   silence_frames_left: AtomicU8,
-  pub jitter_buffer_size: AtomicUsize
+  pub jitter_buffer_size: AtomicUsize,
+  pub jitter_buffer_reset: AtomicBool
 }
 
 impl VoiceConnection {
@@ -131,7 +132,8 @@ impl VoiceConnection {
       state: StateFlow::new(VoiceConnectionState::Disconnected),
       paused: StateFlow::new(false),
       silence_frames_left: AtomicU8::new(0),
-      jitter_buffer_size: AtomicUsize::new(0)
+      jitter_buffer_size: AtomicUsize::new(0),
+      jitter_buffer_reset: AtomicBool::new(false)
     })
   }
 
@@ -502,6 +504,14 @@ impl VoiceConnection {
             debug!("unpaused");
           }
         } else {
+          if let Ok(true) = me.jitter_buffer_reset.compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed) {
+            debug!("reset sample buffer (was: {})", consumer.len());
+            consumer.clear();
+            me.jitter_buffer_size.store(0, Ordering::Relaxed);
+            _ = dtx.try_send(()); // Unblock IO task
+            continue;
+          }
+
           let mut data = vec![0f32; packet_size];
           consumer.pop_slice(&mut data);
           me.jitter_buffer_size.fetch_sub(data.len(), Ordering::Relaxed);

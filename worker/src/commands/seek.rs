@@ -1,3 +1,4 @@
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -43,6 +44,7 @@ impl CommandHandler for SeekCommand {
     if let Some(handle) = handle.downcast_ref::<FFmpegSampleProviderHandle>() {
       let position = Duration::from_secs(position.parse::<u64>().unwrap());
       handle.seek(position).unwrap();
+      player.connection.jitter_buffer_reset.store(true, Ordering::Relaxed);
 
       update_reply!(state, interaction)
         .content(Some("Seeked"))?
