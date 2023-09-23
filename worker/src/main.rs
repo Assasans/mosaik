@@ -5,7 +5,7 @@ pub mod voice;
 pub mod player;
 
 use anyhow::Context;
-use commands::{CommandHandler, PlayCommand, PauseCommand, FiltersCommand, QueueCommand, DebugCommand};
+use commands::{CommandHandler, PlayCommand, PauseCommand, FiltersCommand, QueueCommand, DebugCommand, SeekCommand};
 use player::Player;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, util::SubscriberInitExt};
 use twilight_cache_inmemory::InMemoryCache;
@@ -145,6 +145,22 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
       })?
       .await?;
 
+    interactions
+      .create_guild_command(guild_id)
+      .chat_input("seek", "Seek")?
+      .description_localizations(&localizations! {
+        "ru" => "Hide and seek"
+      })?
+      .command_options(&[
+        argument!(
+          StringBuilder,
+          "position",
+          "Absolute or relative (+/-) position",
+          required(true)
+        )
+      ])?
+      .await?;
+
     let intents = Intents::GUILDS | Intents::GUILD_VOICE_STATES;
     let shard = Shard::new(ShardId::ONE, token, intents);
 
@@ -169,6 +185,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     ("filters", Box::new(FiltersCommand {}) as Box<dyn CommandHandler>),
     ("queue", Box::new(QueueCommand {}) as Box<dyn CommandHandler>),
     ("debug", Box::new(DebugCommand {}) as Box<dyn CommandHandler>),
+    ("seek", Box::new(SeekCommand {}) as Box<dyn CommandHandler>),
   ])));
 
   while let Ok(event) = shard.next_event().await {
