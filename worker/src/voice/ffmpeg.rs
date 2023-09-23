@@ -85,4 +85,10 @@ impl FFmpegSampleProviderHandle {
     let decoder = self.decoder.lock().unwrap();
     Ok(Duration::from_millis(decoder.get_frame_pts()))
   }
+
+  pub fn seek(&self, position: Duration) -> Result<(), RawError> {
+    let mut decoder = self.decoder.lock().unwrap();
+    let base = decoder.get_decoder_time_base();
+    decoder.seek(position.as_millis() as u64 * base / 1000)
+  }
 }

@@ -91,6 +91,18 @@ impl Decoder {
       ffi::decoder_get_frame_pts(self.decoder)
     }
   }
+
+  pub fn get_decoder_time_base(&self) -> u64 {
+    unsafe {
+      ffi::decoder_get_decoder_time_base(self.decoder) as u64
+    }
+  }
+
+  pub fn seek(&mut self, pts: u64) -> Result<(), RawError> {
+    result_zero!(unsafe {
+      ffi::decoder_seek(self.decoder, pts)
+    })
+  }
 }
 
 impl Drop for Decoder {

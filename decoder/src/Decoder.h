@@ -104,9 +104,10 @@ private:
   std::unique_ptr<SwrContext, SwrContextDeleter> swr;
 
   int audio_stream_index = -1;
-  uint64_t pts = 0;
 
 public:
+  uint64_t pts = 0;
+  uint64_t in_pts = 0;
   int init_filters(const char *filters_descr) {
     char args[512];
     int ret;
@@ -297,6 +298,7 @@ public:
 
       while(ret >= 0) {
         ret = avcodec_receive_frame(dec_ctx.get(), frame.get());
+        in_pts += frame->nb_samples;
         if(ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
           // av_log(nullptr, AV_LOG_ERROR, "AGAIN or EOF while avcodec_receive_frame\n");
           break;
@@ -439,6 +441,7 @@ public:
   uint64_t get_frame_pts() {
     if(out_frame->pts != AV_NOPTS_VALUE) {
       // TODO(Assasans): Not tested
+      av_log(nullptr, AV_LOG_ERROR, "get_frame_pts fast path");
       AVRational time_base = out_frame->time_base;
       return out_frame->pts * 1000 * time_base.num / time_base.den;
     }
@@ -448,6 +451,34 @@ public:
     // printf("%lu\n", pts * 1000 / sample_rate);
 
     return pts * 1000 / sample_rate;
+  }
+
+  int get_decoder_time_base() {
+    return dec_ctx->time_base.den;
+  }
+
+  int seek(int64_t pts) {
+    AVRational decoder_time_base = dec_ctx->time_base;
+    AVRational stream_time_base = fmt_ctx->streams[audio_stream_index]->time_base;
+
+    // Original   : X * (n1 / d1) / (n2 / d2)
+    // Without FP : X * n1 * d2 / d1 / n2
+    int64_t timestamp = pts * decoder_time_base.num * stream_time_base.den / decoder_time_base.den / stream_time_base.num;
+
+    int ret = av_seek_frame(fmt_ctx.get(), audio_stream_index, timestamp, AVSEEK_FLAG_ANY);
+    avcodec_flush_buffers(dec_ctx.get());
+
+    // while(true) {
+    //   if((ret = swr_convert_frame(swr.get(), nullptr, nullptr)) < 0) {
+    //     av_log(nullptr, AV_LOG_ERROR, "Error while swr_convert_frame (flush)\n");
+    //     fprintf(stderr, "Error occurred: %s\n", av_err2string(ret).c_str());
+    //     break;
+    //   }
+    // }
+
+    av_log(nullptr, AV_LOG_ERROR, "Seek to %ld -> %ld, stream_time_base: %d/%d\n", pts, timestamp, stream_time_base.num, stream_time_base.den);
+
+    return ret;
   }
 
   int set_enable_filter_graph(bool enable) {
@@ -498,6 +529,14 @@ DLL_EXPORT int decoder_unref_frame(Decoder *decoder) {
 
 DLL_EXPORT uint64_t decoder_get_frame_pts(Decoder *decoder) {
   return decoder->get_frame_pts();
+}
+
+DLL_EXPORT int decoder_get_decoder_time_base(Decoder *decoder) {
+  return decoder->get_decoder_time_base();
+}
+
+DLL_EXPORT int decoder_seek(Decoder *decoder, uint64_t pts) {
+  return decoder->seek(pts);
 }
 
 DLL_EXPORT int decoder_set_enable_filter_graph(Decoder *decoder, bool enable) {
