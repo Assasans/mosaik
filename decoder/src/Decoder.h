@@ -446,11 +446,11 @@ public:
       return out_frame->pts * 1000 * time_base.num / time_base.den;
     }
 
-    const int sample_rate = 48000;
+    const int sample_rate = dec_ctx->sample_rate;
     // printf("get pts %ld, sample rate %d\n", pts, sample_rate);
     // printf("%lu\n", pts * 1000 / sample_rate);
 
-    return pts * 1000 / sample_rate;
+    return in_pts * 1000 / sample_rate;
   }
 
   int get_decoder_time_base() {
@@ -467,6 +467,8 @@ public:
 
     int ret = av_seek_frame(fmt_ctx.get(), audio_stream_index, timestamp, AVSEEK_FLAG_ANY);
     avcodec_flush_buffers(dec_ctx.get());
+    in_pts = pts;
+    pts = 0; // TODO(Assasans): How to calculate it?
 
     // while(true) {
     //   if((ret = swr_convert_frame(swr.get(), nullptr, nullptr)) < 0) {
