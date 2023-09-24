@@ -2,6 +2,7 @@ pub mod track;
 pub mod queue;
 
 use std::sync::{Arc, RwLock};
+use std::sync::atomic::Ordering;
 
 use anyhow::{Result, Context, anyhow};
 use futures_util::StreamExt;
@@ -131,6 +132,18 @@ impl Player {
     Ok(())
   }
 
+  pub async fn stop(self: &Arc<Self>) -> Result<()> {
+    if self.connection.state.get() != VoiceConnectionState::Playing {
+      return Err(anyhow!("invalid player state (expected playing)"));
+    }
+    self.connection.stop_udp_loop.store(true, Ordering::Relaxed);
+
+    debug!("waiting for udp loop to exit...");
+    self.connection.state.wait_for(|state| *state != VoiceConnectionState::Playing).await?;
+
+    Ok(())
+  }
+
   pub async fn play(self: &Arc<Self>) -> Result<()> {
     if self.connection.state.get() == VoiceConnectionState::Playing {
       return Err(anyhow!("invalid player state (playing)"));
@@ -147,7 +160,11 @@ impl Player {
     let clone = self.connection.clone();
     tokio::spawn(async move {
       VoiceConnection::run_udp_loop(clone).await.unwrap();
-      x.tx.send_async(PlayerEvent::TrackFinished(x.queue.position())).await.unwrap();
+
+      // If stop_udp_loop is not set - send PlayerEvent::TrackFinished
+      if let Err(_) = x.connection.stop_udp_loop.compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed) {
+        x.tx.send_async(PlayerEvent::TrackFinished(x.queue.position())).await.unwrap();
+      }
     });
 
     Ok(())

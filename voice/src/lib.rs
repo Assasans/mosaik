@@ -115,7 +115,8 @@ pub struct VoiceConnection {
   paused: StateFlow<bool>,
   silence_frames_left: AtomicU8,
   pub jitter_buffer_size: AtomicUsize,
-  pub jitter_buffer_reset: AtomicBool
+  pub jitter_buffer_reset: AtomicBool,
+  pub stop_udp_loop: AtomicBool
 }
 
 impl VoiceConnection {
@@ -133,7 +134,8 @@ impl VoiceConnection {
       paused: StateFlow::new(false),
       silence_frames_left: AtomicU8::new(0),
       jitter_buffer_size: AtomicUsize::new(0),
-      jitter_buffer_reset: AtomicBool::new(false)
+      jitter_buffer_reset: AtomicBool::new(false),
+      stop_udp_loop: AtomicBool::new(false)
     })
   }
 
@@ -450,7 +452,11 @@ impl VoiceConnection {
           Some(data) => {
             if producer.free_len() < data.len() {
               warn!("jitter buffer filled ({} < {}), blocking sample provider loop...", producer.free_len(), data.len());
-              drx.recv().unwrap();
+              match drx.recv() {
+                Ok(()) => {},
+                Err(error) if error == RecvError::Disconnected => break,
+                Err(error) => panic!("drx.recv(): {:?}", error)
+              };
             }
 
             producer.push_slice(&data);
@@ -492,6 +498,11 @@ impl VoiceConnection {
       }
 
       while consumer.len() >= packet_size {
+        if me.stop_udp_loop.load(Ordering::Relaxed) {
+          debug!("stop udp loop");
+          break 'packet;
+        }
+
         let mut udp_lock = me.udp.lock().await;
         let udp = udp_lock.as_mut().context("no voice UDP socket")?;
 
@@ -534,15 +545,17 @@ impl VoiceConnection {
       }
     }
 
-    // Flush
-    let len = consumer.len();
-    let mut data = vec![0f32; packet_size];
-    debug!("flushing {} samples...", len);
-    consumer.pop_slice(&mut data[..len]);
+    if !me.stop_udp_loop.load(Ordering::Relaxed) {
+      // Flush
+      let len = consumer.len();
+      let mut data = vec![0f32; packet_size];
+      debug!("flushing {} samples...", len);
+      consumer.pop_slice(&mut data[..len]);
 
-    let mut udp_lock = me.udp.lock().await;
-    let udp = udp_lock.as_mut().context("no voice UDP socket")?;
-    me.send_voice_packet(&ready, udp, AudioFrame::Pcm(data)).await?;
+      let mut udp_lock = me.udp.lock().await;
+      let udp = udp_lock.as_mut().context("no voice UDP socket")?;
+      me.send_voice_packet(&ready, udp, AudioFrame::Pcm(data)).await?;
+    }
 
     debug!("play loop finished");
     me.state.set(VoiceConnectionState::Connected)?;
