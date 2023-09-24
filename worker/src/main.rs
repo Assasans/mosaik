@@ -155,7 +155,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         argument!(
           StringBuilder,
           "position",
-          "Absolute or relative (+/-) position",
+          "Absolute or relative (++/-) position",
           required(true)
         )
       ])?
