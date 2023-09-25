@@ -62,8 +62,8 @@ impl CommandHandler for PlayCommand {
 
     // TODO(Assasans): Internal code
     {
-      let mut ws = player.connection.ws.lock().await;
-      ws.as_mut().unwrap().send_speaking(true).await?;
+      let ws = player.connection.ws.read().await;
+      ws.as_ref().unwrap().send_speaking(true).await?;
     }
 
     let (provider, input) = source.split_once(':').context("invalid source")?;

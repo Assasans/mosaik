@@ -69,7 +69,7 @@ impl CommandHandler for DebugCommand {
       player.queue.mode.read().unwrap()
     )));
 
-    let ws = player.connection.ws.lock().await;
+    let ws = player.connection.ws.read().await;
     if let Some(ws) = ws.as_ref() {
       if let Some(ready) = &ws.ready {
         embed = embed.field(EmbedFieldBuilder::new("WebSocketVoiceConnection", format!(

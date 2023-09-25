@@ -30,6 +30,7 @@ use rand::random;
 use ringbuf::HeapRb;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::RwLock;
 use tokio_tungstenite::{tungstenite::protocol::{CloseFrame, frame::coding::CloseCode}};
 use xsalsa20poly1305::{aead::generic_array::GenericArray, TAG_SIZE, XSalsa20Poly1305, KeyInit, Key, AeadInPlace};
 
@@ -103,7 +104,7 @@ pub enum AudioFrame {
 }
 
 pub struct VoiceConnection {
-  pub ws: Mutex<Option<WebSocketVoiceConnection>>,
+  pub ws: RwLock<Option<WebSocketVoiceConnection>>,
   ws_heartbeat_interval: Mutex<Option<Interval>>,
   pub udp: Mutex<Option<UdpVoiceConnection>>,
   cipher: Mutex<Option<XSalsa20Poly1305>>,
@@ -122,7 +123,7 @@ pub struct VoiceConnection {
 impl VoiceConnection {
   pub fn new() -> Result<Self> {
     Ok(Self {
-      ws: Mutex::new(None),
+      ws: RwLock::new(None),
       ws_heartbeat_interval: Mutex::new(None),
       udp: Mutex::new(None),
       cipher: Mutex::new(None),
@@ -146,10 +147,10 @@ impl VoiceConnection {
     // self.opus_encoder.lock().await.set_inband_fec(true)?;
     // self.opus_encoder.lock().await.set_packet_loss_perc(50)?;
 
-    *self.ws.lock().await = Some(WebSocketVoiceConnection::new(VoiceConnectionMode::New(options.clone())).await?);
+    *self.ws.write().await = Some(WebSocketVoiceConnection::new(VoiceConnectionMode::New(options.clone())).await?);
 
-    let mut ws_guard = self.ws.lock().await;
-    let ws = ws_guard.as_mut().context("no voice gateway connection")?;
+    let ws = self.ws.read().await;
+    let ws = ws.as_ref().context("no voice gateway connection")?;
 
     let hello = ws.hello.as_ref().context("no voice hello packet")?;
     let ready = ws.ready.as_ref().context("no voice ready packet")?;
@@ -197,8 +198,8 @@ impl VoiceConnection {
     self.state.set(VoiceConnectionState::Disconnected)?;
     *self.udp.lock().await = None;
 
-    let mut ws_lock = self.ws.lock().await;
-    if let Some(ref mut ws) = *ws_lock {
+    let mut ws_lock = self.ws.write().await;
+    if let Some(ref ws) = *ws_lock {
       ws.close(CloseFrame {
         code: CloseCode::Normal,
         reason: "".into()
@@ -354,8 +355,8 @@ impl VoiceConnection {
   pub async fn run_ws_loop(me: Weak<Self>) -> Result<()> {
     let (read, close) = {
       let me = me.upgrade().context("voice connection dropped")?;
-      let mut ws = me.ws.lock().await;
-      let ws = ws.as_mut().context("no voice gateway connection")?;
+      let ws = me.ws.read().await;
+      let ws = ws.as_ref().context("no voice gateway connection")?;
 
       (ws.read.clone(), ws.close_rx.clone())
     };
@@ -410,8 +411,8 @@ impl VoiceConnection {
         }
 
         _ = async { interval.as_mut().unwrap().tick().await }, if interval.is_some() => {
-          let mut ws_guard = me.ws.lock().await;
-          let ws = ws_guard.as_mut().context("no voice gateway connection")?;
+          let ws = me.ws.read().await;
+          let ws = ws.as_ref().context("no voice gateway connection")?;
 
           ws.send_heartbeat().await?;
         }
@@ -432,8 +433,8 @@ impl VoiceConnection {
     let clone = me.clone();
 
     let ready = {
-      let mut ws_lock = me.ws.lock().await;
-      let ws = ws_lock.as_mut().context("no voice gateway connection")?;
+      let ws = me.ws.read().await;
+      let ws = ws.as_ref().context("no voice gateway connection")?;
       ws.ready.clone().context("no voice ready packet")?
     };
 
