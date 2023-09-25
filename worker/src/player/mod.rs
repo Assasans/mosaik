@@ -3,10 +3,12 @@ pub mod queue;
 
 use std::sync::{Arc, RwLock};
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use anyhow::{Result, Context, anyhow};
 use futures_util::StreamExt;
-use tracing::debug;
+use tokio::time;
+use tracing::{debug, warn};
 use twilight_gateway::{Event, EventType};
 use twilight_model::{id::{Id, marker::{GuildMarker, ChannelMarker}}, gateway::payload::outgoing::UpdateVoiceState};
 
@@ -105,7 +107,28 @@ impl Player {
 
     let connection_weak = Arc::downgrade(&self.connection);
     tokio::spawn(async move {
-      VoiceConnection::run_ws_loop(connection_weak).await.unwrap()
+      loop {
+        match VoiceConnection::run_ws_loop(connection_weak.clone()).await {
+          Ok(()) => {
+            debug!("VoiceConnection::run_ws_loop clean exit");
+            break;
+          }
+          Err(error) => {
+            warn!("VoiceConnection::run_ws_loop error: {:?}", error);
+            time::sleep(Duration::from_millis(3000)).await;
+
+            loop {
+              match connection_weak.upgrade().unwrap().reconnect_ws().await {
+                Ok(()) => break,
+                Err(error) => {
+                  warn!("VoiceConnection::reconnect_ws error: {:?}", error);
+                  time::sleep(Duration::from_millis(3000)).await;
+                }
+              }
+            }
+          }
+        }
+      }
     });
 
     let cloned = self.clone();

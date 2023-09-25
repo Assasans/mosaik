@@ -398,14 +398,7 @@ impl VoiceConnection {
           if let Some(frame) = frame {
             let code: GatewayCloseCode = frame.code.into();
             if code.can_reconnect() {
-              let mut ws = me.ws.lock().await;
-              let old_ws = ws.take().context("no voice gateway connection")?;
-
-              *ws = Some(WebSocketVoiceConnection::new(VoiceConnectionMode::Resume {
-                options: old_ws.options,
-                hello: old_ws.hello.context("no voice hello packet")?,
-                ready: old_ws.ready.context("no voice ready packet")?
-              }).await?);
+              me.reconnect_ws().await?;
             }
           }
         }
@@ -419,6 +412,18 @@ impl VoiceConnection {
       }
     }
 
+    Ok(())
+  }
+
+  pub async fn reconnect_ws(&self) -> Result<()> {
+    let mut ws = self.ws.write().await;
+    let old_ws = ws.take().context("no voice gateway connection")?;
+
+    debug!("reconnecting to voice gateway...");
+    *ws = Some(WebSocketVoiceConnection::new(VoiceConnectionMode::Resume {
+      options: old_ws.options,
+      ready: old_ws.ready.context("no voice ready packet")?
+    }).await?);
     Ok(())
   }
 

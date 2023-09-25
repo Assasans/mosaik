@@ -22,7 +22,7 @@ pub struct WebSocketVoiceConnection {
 
 pub enum VoiceConnectionMode {
   New(VoiceConnectionOptions),
-  Resume { options: VoiceConnectionOptions, hello: Hello, ready: Ready }
+  Resume { options: VoiceConnectionOptions, ready: Ready }
 }
 
 impl WebSocketVoiceConnection {
@@ -129,10 +129,37 @@ impl WebSocketVoiceConnection {
         me.ready = Some(ready.unwrap());
       }
 
-      VoiceConnectionMode::Resume { hello, ready, .. } => {
-        me.hello = Some(hello);
+      VoiceConnectionMode::Resume { ready, .. } => {
         me.ready = Some(ready);
         me.send_resume().await?;
+
+        let mut hello = None;
+        let mut resumed = false;
+        loop {
+          let event: GatewayEvent = me.receive().await?.try_into()?;
+          match event {
+            GatewayEvent::Hello(it) => {
+              hello = Some(it);
+              if resumed {
+                break;
+              }
+            },
+            GatewayEvent::Resumed => {
+              resumed = true;
+              if hello.is_some() {
+                break;
+              }
+            },
+            other => {
+              warn!("Expected Resumed or Hello packet, got: {:?}", other);
+              return Err(anyhow!("Invalid packet")); // TODO
+            }
+          }
+        }
+
+        me.hello = Some(hello.unwrap());
+
+        debug!("voice gateway connection resumed");
       }
     }
 
