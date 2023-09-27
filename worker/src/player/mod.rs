@@ -129,6 +129,10 @@ impl Player {
           }
         }
       }
+
+      if let Some(connection) = connection_weak.upgrade() {
+        connection.stop_udp_loop.store(true, Ordering::Relaxed);
+      }
     });
 
     let cloned = self.clone();
