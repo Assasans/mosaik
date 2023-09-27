@@ -162,7 +162,7 @@ impl Player {
     self.connection.stop_udp_loop.store(true, Ordering::Relaxed);
 
     debug!("waiting for udp loop to exit...");
-    self.connection.state.wait_for(|state| *state != VoiceConnectionState::Playing).await?;
+    self.connection.state.wait_for(|state| *state != VoiceConnectionState::Playing).await;
 
     Ok(())
   }

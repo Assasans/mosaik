@@ -1,4 +1,3 @@
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -51,7 +50,7 @@ impl CommandHandler for DebugCommand {
     if let Some(handle) = handle.downcast_ref::<FFmpegSampleProviderHandle>() {
       // TODO(Assasans): Make get_frame_pts return raw PTS (samples count)?
       let decoder_pts = handle.get_frame_pts().unwrap();
-      let buffer_length = player.connection.jitter_buffer_size.load(Ordering::Relaxed) * 1000 / 2 / 48000;
+      let buffer_length = player.connection.sample_buffer.len() * 1000 / 2 / 48000;
       let buffer_length = Duration::from_millis(buffer_length as u64);
       let pts = decoder_pts - buffer_length;
 

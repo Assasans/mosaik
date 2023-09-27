@@ -54,7 +54,7 @@ impl CommandHandler for SeekCommand {
       };
 
       handle.seek(position).unwrap();
-      player.connection.jitter_buffer_reset.store(true, Ordering::Relaxed);
+      player.connection.sample_buffer.clear().await;
 
       update_reply!(state, interaction)
         .content(Some(&format!("Seeked to {:?} (was: {:?})", position, current_position)))?

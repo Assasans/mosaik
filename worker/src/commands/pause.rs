@@ -29,7 +29,7 @@ impl CommandHandler for PauseCommand {
       return Ok(());
     };
 
-    player.connection.set_paused(!player.connection.is_paused())?;
+    player.connection.set_paused(!player.connection.is_paused());
 
     update_reply!(state, interaction)
       .content(Some("Ok"))?

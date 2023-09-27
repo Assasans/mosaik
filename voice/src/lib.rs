@@ -5,6 +5,7 @@ pub mod provider;
 pub mod ws;
 pub mod udp;
 pub mod close_code;
+pub mod buffer;
 
 use tokio::{sync::Mutex, select, time::{interval, Interval}};
 use tracing::*;
@@ -16,7 +17,7 @@ use std::{
   sync::{Arc, Weak},
   time::{Duration, Instant}
 };
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use opus::{Encoder, Bitrate, Channels, Application};
 use anyhow::{Result, anyhow, Context};
 use discortp::{
@@ -25,9 +26,7 @@ use discortp::{
   rtp::{MutableRtpPacket, RtpType},
   rtcp::report::{MutableReceiverReportPacket, ReportBlockPacket}
 };
-use flume::RecvError;
 use rand::random;
-use ringbuf::HeapRb;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::RwLock;
@@ -38,6 +37,7 @@ pub use opcode::*;
 pub use event::*;
 
 use utils::state_flow::StateFlow;
+use crate::buffer::SampleBuffer;
 use crate::close_code::GatewayCloseCode;
 use crate::constants::{OPUS_SILENCE_FRAME, OPUS_SILENCE_FRAMES};
 use crate::provider::SampleProviderHandle;
@@ -115,8 +115,7 @@ pub struct VoiceConnection {
   pub state: StateFlow<VoiceConnectionState>,
   paused: StateFlow<bool>,
   silence_frames_left: AtomicU8,
-  pub jitter_buffer_size: AtomicUsize,
-  pub jitter_buffer_reset: AtomicBool,
+  pub sample_buffer: SampleBuffer<f32>,
   pub stop_udp_loop: AtomicBool
 }
 
@@ -134,8 +133,7 @@ impl VoiceConnection {
       state: StateFlow::new(VoiceConnectionState::Disconnected),
       paused: StateFlow::new(false),
       silence_frames_left: AtomicU8::new(0),
-      jitter_buffer_size: AtomicUsize::new(0),
-      jitter_buffer_reset: AtomicBool::new(false),
+      sample_buffer: SampleBuffer::new(SAMPLE_RATE * 3, SAMPLE_RATE, SAMPLE_RATE * 2),
       stop_udp_loop: AtomicBool::new(false)
     })
   }
@@ -189,13 +187,13 @@ impl VoiceConnection {
     let key = Key::from_slice(&session_description.secret_key);
     *self.cipher.lock().await = Some(XSalsa20Poly1305::new(&key));
 
-    self.state.set(VoiceConnectionState::Connected)?;
+    self.state.set(VoiceConnectionState::Connected);
 
     Ok(())
   }
 
   pub async fn disconnect(&self) -> Result<()> {
-    self.state.set(VoiceConnectionState::Disconnected)?;
+    self.state.set(VoiceConnectionState::Disconnected);
     *self.udp.lock().await = None;
 
     let mut ws_lock = self.ws.write().await;
@@ -338,14 +336,13 @@ impl VoiceConnection {
     Ok(())
   }
 
-  pub fn set_paused(&self, is_paused: bool) -> Result<()> {
-    self.paused.set(is_paused)?;
+  pub fn set_paused(&self, is_paused: bool) {
+    self.paused.set(is_paused);
     if is_paused {
       self.silence_frames_left.store(OPUS_SILENCE_FRAMES, Ordering::Relaxed);
     } else {
       self.silence_frames_left.store(0, Ordering::Relaxed);
     }
-    Ok(())
   }
 
   pub fn is_paused(&self) -> bool {
@@ -428,14 +425,11 @@ impl VoiceConnection {
   }
 
   pub async fn run_udp_loop(me: Arc<Self>) -> Result<()> {
-    let packet_size = TIMESTAMP_STEP * CHANNEL_COUNT;
-    let buffer = HeapRb::<f32>::new(SAMPLE_RATE * 3); // TODO(Assasans): Calculate buffer size
-    let (mut producer, mut consumer) = buffer.split();
-    let (stx, srx) = flume::bounded(0);
-    let (tx, rx) = flume::bounded(0);
-    let (dtx, drx) = flume::bounded(0);
+    const PACKET_SIZE: usize = TIMESTAMP_STEP * CHANNEL_COUNT;
+    let finished = Arc::new(AtomicBool::new(false));
 
     let clone = me.clone();
+    let finished_clone = finished.clone();
 
     let ready = {
       let ws = me.ws.read().await;
@@ -443,128 +437,97 @@ impl VoiceConnection {
       ws.ready.clone().context("no voice ready packet")?
     };
 
-    tokio::task::spawn_blocking(move || {
-      let mut sample_provider_lock = clone.sample_provider.blocking_lock();
-
-      'packet: loop {
-        let sample_provider = sample_provider_lock.as_mut().context("no sample provider set").unwrap();
-
-        if producer.len() >= producer.capacity() / 2 {
-          // Ready to play, filled
-          _ = stx.try_send(());
-        }
-
+    tokio::task::spawn(async move {
+      loop {
+        let mut sample_provider = clone.sample_provider.lock().await;
+        let sample_provider = sample_provider.as_mut().context("no sample provider set").unwrap();
         match sample_provider.get_samples() {
           Some(data) => {
-            if producer.free_len() < data.len() {
-              warn!("jitter buffer filled ({} < {}), blocking sample provider loop...", producer.free_len(), data.len());
-              match drx.recv() {
-                Ok(()) => {},
-                Err(error) if error == RecvError::Disconnected => break,
-                Err(error) => panic!("drx.recv(): {:?}", error)
-              };
-            }
-
-            producer.push_slice(&data);
-            clone.jitter_buffer_size.fetch_add(data.len(), Ordering::Relaxed);
-            if producer.len() >= packet_size {
-              // debug!("wake sender");
-              _ = tx.try_send(());
-            }
-
             // debug!("got {} samples", data.len());
+            clone.sample_buffer.write(&data).await.unwrap();
           }
           None => {
             debug!("got sample provider eof");
-            break 'packet;
+            break;
           }
         }
       }
+      finished_clone.store(true, Ordering::Release);
     });
 
     debug!("waiting for jitter buffer to fill halfway");
-    srx.recv_async().await?;
+    me.sample_buffer.wait_for(me.sample_buffer.low_threshold).await?;
     debug!("jitter buffer filled halfway");
 
-    me.state.set(VoiceConnectionState::Playing)?;
+    me.state.set(VoiceConnectionState::Playing);
 
     {
       let mut udp_lock = me.udp.lock().await;
       let udp = udp_lock.as_mut().context("no voice UDP socket")?;
       udp.deadline = Instant::now();
     }
-    'packet: loop {
-      if consumer.len() < packet_size {
-        warn!("sample buffer drained, waiting... {} / {}", consumer.len(), packet_size);
-        match rx.recv_async().await {
-          Ok(()) => {},
-          Err(error) if error == RecvError::Disconnected => break,
-          Err(error) => return Err(anyhow::anyhow!(error))
-        };
+    loop {
+      if me.stop_udp_loop.load(Ordering::Relaxed) {
+        debug!("stop udp loop");
+        break;
       }
-
-      while consumer.len() >= packet_size {
-        if me.stop_udp_loop.load(Ordering::Relaxed) {
-          debug!("stop udp loop");
-          break 'packet;
-        }
-
-        let mut udp_lock = me.udp.lock().await;
-        let udp = udp_lock.as_mut().context("no voice UDP socket")?;
-
-        if me.paused.get() && me.silence_frames_left.load(Ordering::Relaxed) > 0 {
-          me.silence_frames_left.fetch_sub(1, Ordering::SeqCst);
-          me.send_voice_packet(&ready, udp, AudioFrame::Opus(OPUS_SILENCE_FRAME.to_vec())).await?;
-          if me.silence_frames_left.load(Ordering::Relaxed) == 0 {
-            debug!("waiting for unpause...");
-            me.paused.wait_for(|paused| *paused == false).await?;
-            debug!("unpaused");
-          }
-        } else {
-          if let Ok(true) = me.jitter_buffer_reset.compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed) {
-            debug!("reset sample buffer (was: {})", consumer.len());
-            consumer.clear();
-            me.jitter_buffer_size.store(0, Ordering::Relaxed);
-            _ = dtx.try_send(()); // Unblock IO task
-            continue;
-          }
-
-          let mut data = vec![0f32; packet_size];
-          consumer.pop_slice(&mut data);
-          me.jitter_buffer_size.fetch_sub(data.len(), Ordering::Relaxed);
-          // debug!("sending {} samples", packet_size);
-
-          if consumer.free_len() >= consumer.capacity() / 2 {
-            // debug!("sample buffer drained");
-            _ = dtx.try_send(());
-          }
-
-          me.send_voice_packet(&ready, udp, AudioFrame::Pcm(data)).await?;
-          // samples.copy_within(packet_size..got, 0);
-          // got -= packet_size;
-        }
-        // me.recv_rtcp_stats(udp).await?;
-
-        if Instant::now() >= udp.heartbeat_time + Duration::from_millis(5000) {
-          udp.send_keepalive(&ready).await?;
-        }
-      }
-    }
-
-    if !me.stop_udp_loop.load(Ordering::Relaxed) {
-      // Flush
-      let len = consumer.len();
-      let mut data = vec![0f32; packet_size];
-      debug!("flushing {} samples...", len);
-      consumer.pop_slice(&mut data[..len]);
 
       let mut udp_lock = me.udp.lock().await;
       let udp = udp_lock.as_mut().context("no voice UDP socket")?;
-      me.send_voice_packet(&ready, udp, AudioFrame::Pcm(data)).await?;
+
+      if me.paused.get() && me.silence_frames_left.load(Ordering::Relaxed) > 0 {
+        me.silence_frames_left.fetch_sub(1, Ordering::SeqCst);
+        me.send_voice_packet(&ready, udp, AudioFrame::Opus(OPUS_SILENCE_FRAME.to_vec())).await?;
+        if me.silence_frames_left.load(Ordering::Relaxed) == 0 {
+          debug!("waiting for unpause...");
+          me.paused.wait_for(|paused| *paused == false).await;
+          debug!("unpaused");
+        }
+      } else {
+        // if let Ok(true) = me.jitter_buffer_reset.compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed) {
+        //   debug!("reset sample buffer (was: {})", consumer.len());
+        //   consumer.clear();
+        //   me.jitter_buffer_size.store(0, Ordering::Relaxed);
+        //   _ = dtx.try_send(()); // Unblock IO task
+        //   continue;
+        // }
+
+        if finished.load(Ordering::Acquire) {
+          debug!("got finished == true");
+          break;
+        }
+
+        let mut data = vec![0f32; PACKET_SIZE];
+        me.sample_buffer.read(&mut data).await?;
+        // debug!("sending {} samples", PACKET_SIZE);
+
+        me.send_voice_packet(&ready, udp, AudioFrame::Pcm(data)).await?;
+        // samples.copy_within(PACKET_SIZE..got, 0);
+        // got -= PACKET_SIZE;
+      }
+      // me.recv_rtcp_stats(udp).await?;
+
+      if Instant::now() >= udp.heartbeat_time + Duration::from_millis(5000) {
+        udp.send_keepalive(&ready).await?;
+      }
+    }
+
+    // Flush
+    if !me.stop_udp_loop.load(Ordering::Relaxed) {
+      let data = me.sample_buffer.flush().await;
+      for chunk in data.chunks(PACKET_SIZE) {
+        debug!("flushing {} (total: {}) samples...", chunk.len(), data.len());
+        let mut chunk = chunk.to_vec();
+        chunk.resize(PACKET_SIZE, 0f32); // Pad with zeros to make sure opus_encode_float does not fail
+
+        let mut udp = me.udp.lock().await;
+        let udp = udp.as_mut().context("no voice UDP socket")?;
+        me.send_voice_packet(&ready, udp, AudioFrame::Pcm(chunk)).await?;
+      }
     }
 
     debug!("play loop finished");
-    me.state.set(VoiceConnectionState::Connected)?;
+    me.state.set(VoiceConnectionState::Connected);
     Ok(())
   }
 }
