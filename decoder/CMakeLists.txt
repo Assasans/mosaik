@@ -27,7 +27,7 @@ else()
   message(FATAL_ERROR "pkg-config is required to find ffmpeg")
 endif()
 
-target_link_libraries(${PROJECT_NAME} INTERFACE PkgConfig::FFMPEG)
+target_link_libraries(${PROJECT_NAME} PUBLIC PkgConfig::FFMPEG)
 
 target_compile_options(${PROJECT_NAME} PRIVATE
   $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
