@@ -108,6 +108,7 @@ private:
 public:
   uint64_t pts = 0;
   uint64_t in_pts = 0;
+
   int init_filters(const char *filters_descr) {
     char args[512];
     int ret;
@@ -307,17 +308,17 @@ public:
           goto end;
         }
 
-        std::unique_ptr<AVFrame, AVFrameDeleter>* process_frame;
+        AVFrame *process_frame;
         if(enable_filter_graph) {
-          process_frame = &filter_frame;
-
           /* push the audio data from decoded frame into the filtergraph */
           if(av_buffersrc_add_frame_flags(buffersrc_ctx, frame.get(), AV_BUFFERSRC_FLAG_KEEP_REF) < 0) {
             av_log(nullptr, AV_LOG_ERROR, "Error while feeding the audio filtergraph\n");
             break;
           }
+
+          process_frame = filter_frame.get();
         } else {
-          process_frame = &frame;
+          process_frame = frame.get();
         }
 
         /* pull filtered audio from the filtergraph */
@@ -331,30 +332,32 @@ public:
             }
           }
 
-          AVFrame* filter_frame = process_frame->get(); // TODO(Assasans): Shadowing...
           out_frame->format = AV_SAMPLE_FMT_FLT;
           out_frame->ch_layout = AV_CHANNEL_LAYOUT_STEREO;
           out_frame->sample_rate = 48000;
-
           if(!swr_is_initialized(swr.get())) {
-            auto swr_raw = swr.get();
             fprintf(
               stderr,
               "Initializing libswresample: rate=%d, sample_fmt=%s\n",
-              filter_frame->sample_rate,
-              av_get_sample_fmt_name((AVSampleFormat)filter_frame->format)
+              process_frame->sample_rate,
+              av_get_sample_fmt_name((AVSampleFormat)process_frame->format)
             );
-            swr_alloc_set_opts2(
+
+            SwrContext *swr_raw = swr.get();
+            if((ret = swr_alloc_set_opts2(
               &swr_raw,
               &out_frame->ch_layout,
               (AVSampleFormat)out_frame->format,
               out_frame->sample_rate,
-              &filter_frame->ch_layout,
-              (AVSampleFormat)filter_frame->format,
-              filter_frame->sample_rate,
+              &process_frame->ch_layout,
+              (AVSampleFormat)process_frame->format,
+              process_frame->sample_rate,
               0,
               nullptr
-            );
+            )) < 0) {
+              av_log(nullptr, AV_LOG_ERROR, "Error while swr_alloc_set_opts2\n");
+              goto end;
+            }
 
             if((ret = swr_init(swr.get())) < 0) {
               av_log(nullptr, AV_LOG_ERROR, "Error while swr_init\n");
@@ -362,10 +365,22 @@ public:
             }
           }
 
-          if((ret = swr_convert_frame(swr.get(), out_frame.get(), filter_frame)) < 0) {
-            av_log(nullptr, AV_LOG_ERROR, "Error while swr_convert_frame\n");
+          // This does the same thing as swr_convert_frame, but without the stupid config_changed call,
+          // which returns an AVERROR_INPUT_CHANGED even if it is not a case.
+          out_frame->nb_samples = swr_get_delay(swr.get(), out_frame->sample_rate)
+                                  + process_frame->nb_samples * (int64_t)out_frame->sample_rate /
+                                    process_frame->sample_rate
+                                  + 3;
+          if((ret = av_frame_get_buffer(out_frame.get(), 0)) < 0) {
+            av_log(nullptr, AV_LOG_ERROR, "Error while av_frame_get_buffer\n");
             goto end;
           }
+          if((ret = swr_convert(swr.get(), out_frame->extended_data, out_frame->nb_samples,
+                                (const uint8_t **)process_frame->extended_data, process_frame->nb_samples)) < 0) {
+            av_log(nullptr, AV_LOG_ERROR, "Error while swr_convert\n");
+            goto end;
+          }
+          out_frame->nb_samples = ret;
 
           pts += out_frame->nb_samples;
           // printf("increment pts by %d -> %ld\n", out_frame->nb_samples, pts);
@@ -376,7 +391,7 @@ public:
 
           // print_frame(out_frame.get());
           // av_frame_unref(out_frame.get());
-          av_frame_unref(filter_frame);
+          av_frame_unref(process_frame);
 
           if(!enable_filter_graph) {
             break;
@@ -398,13 +413,16 @@ public:
   }
 
   int flush_frame(float *&data, int &data_length) {
+    int ret;
+
     out_frame->format = AV_SAMPLE_FMT_FLT;
     out_frame->ch_layout = AV_CHANNEL_LAYOUT_STEREO;
     out_frame->sample_rate = 48000;
 
-    int ret;
-    if((ret = swr_convert_frame(swr.get(), out_frame.get(), nullptr)) < 0) {
-      av_log(nullptr, AV_LOG_ERROR, "Error while swr_convert_frame (flush)\n");
+    // This does the same thing as swr_convert_frame, but without the stupid config_changed call,
+    // which returns an AVERROR_INPUT_CHANGED even if it is not a case.
+    if((ret = swr_convert(swr.get(), out_frame->extended_data, out_frame->nb_samples, nullptr, 0)) < 0) {
+      av_log(nullptr, AV_LOG_ERROR, "Error while swr_convert (flush)\n");
       goto end;
     }
 
@@ -463,12 +481,13 @@ public:
 
     // Original   : X * (n1 / d1) / (n2 / d2)
     // Without FP : X * n1 * d2 / d1 / n2
-    int64_t timestamp = pts * decoder_time_base.num * stream_time_base.den / decoder_time_base.den / stream_time_base.num;
+    int64_t timestamp =
+      pts * decoder_time_base.num * stream_time_base.den / decoder_time_base.den / stream_time_base.num;
 
     int ret = av_seek_frame(fmt_ctx.get(), audio_stream_index, timestamp, AVSEEK_FLAG_ANY);
     avcodec_flush_buffers(dec_ctx.get());
-    in_pts = pts;
-    pts = 0; // TODO(Assasans): How to calculate it?
+    this->in_pts = pts;
+    this->pts = 0; // TODO(Assasans): How to calculate it?
 
     // while(true) {
     //   if((ret = swr_convert_frame(swr.get(), nullptr, nullptr)) < 0) {
@@ -478,26 +497,22 @@ public:
     //   }
     // }
 
-    av_log(nullptr, AV_LOG_ERROR, "Seek to %ld -> %ld, stream_time_base: %d/%d\n", pts, timestamp, stream_time_base.num, stream_time_base.den);
+    av_log(nullptr, AV_LOG_ERROR, "Seek to %ld -> %ld, stream_time_base: %d/%d\n", pts, timestamp, stream_time_base.num,
+           stream_time_base.den);
 
     return ret;
   }
 
   int set_enable_filter_graph(bool enable) {
-    int res;
+    bool changed = enable_filter_graph != enable;
     enable_filter_graph = enable;
 
-    if((res = swr_config_frame(
-      swr.get(),
-      out_frame.get(),
-      filter_frame.get()
-    )) < 0) {
-      av_log(nullptr, AV_LOG_ERROR, "Error while swr_config_frame\n");
-      goto end;
+    int ret = 0;
+    if(changed && swr_is_initialized(swr.get())) {
+      swr_close(swr.get());
     }
 
-    end:
-    return res;
+    return ret;
   }
 };
 
