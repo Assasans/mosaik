@@ -6,7 +6,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/CMakeModules)
 set(CMAKE_CXX_STANDARD 20)
 
 add_library(${PROJECT_NAME} SHARED src/main.cpp src/api.cpp)
-#add_executable(${PROJECT_NAME} src/main.cpp)
+add_executable(${PROJECT_NAME}-test src/main.cpp)
 
 set(FFMPEG_MINIMUM_VERSION 6.0)
 
@@ -27,12 +27,14 @@ else()
   message(FATAL_ERROR "pkg-config is required to find ffmpeg")
 endif()
 
-target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::FFMPEG)
+target_link_libraries(${PROJECT_NAME} INTERFACE PkgConfig::FFMPEG)
 
 target_compile_options(${PROJECT_NAME} PRIVATE
   $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
   $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>
 )
 
-# target_compile_options(${PROJECT_NAME} PRIVATE -fsanitize=address)
-# target_link_options(${PROJECT_NAME} PRIVATE -fsanitize=address)
+target_link_libraries(${PROJECT_NAME}-test PRIVATE ${PROJECT_NAME})
+
+# target_compile_options(${PROJECT_NAME}-test PRIVATE -fsanitize=address)
+# target_link_options(${PROJECT_NAME}-test PRIVATE -fsanitize=address)
