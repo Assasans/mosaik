@@ -48,19 +48,15 @@ impl CommandHandler for FiltersCommand {
           .content(Some("Disabled filter graph"))?
           .await?;
       } else {
-        handle.set_enable_filter_graph(true).unwrap();
         match handle.init_filters(&filters) {
           Ok(()) => {
+            handle.set_enable_filter_graph(true).unwrap();
             update_reply!(state, interaction)
               .content(Some(&format!("Set filter graph: `{}`", filters)))?
               .await?;
           },
           Err(error) => {
             error!("failed to init filters: {:?}", error);
-
-            // TODO(Assasans): UDP loop may call get_samples after init_filters failed,
-            // but filter graph is still not disabled, causing segfault.
-            handle.set_enable_filter_graph(false).unwrap();
 
             update_reply!(state, interaction)
               .content(Some(&format!("Failed to set filter graph: `{:?}`", error)))?

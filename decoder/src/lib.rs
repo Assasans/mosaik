@@ -47,9 +47,16 @@ impl Decoder {
 
   pub fn init_filters(&mut self, filters_descr: &str) -> Result<(), RawError> {
     let filters_descr = CString::new(filters_descr).unwrap();
-    result_zero!(unsafe {
+    let result = unsafe {
       ffi::decoder_init_filters(self.decoder, filters_descr.as_ptr())
-    })
+    };
+    if result != 0 {
+      // We set filter graph while borrowing &mut self, so there is no way
+      // of another thread reading frames while filter graph is in invalid state.
+      self.set_enable_filter_graph(false)?;
+    }
+
+    result_zero!(result)
   }
 
   pub fn set_enable_filter_graph(&mut self, enable: bool) -> Result<(), RawError> {
