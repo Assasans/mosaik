@@ -1,4 +1,5 @@
 use serenity::all::UserId;
+
 use crate::providers::MediaProvider;
 
 #[derive(Debug)]
@@ -9,9 +10,6 @@ pub struct Track {
 
 impl Track {
   pub fn new(provider: Box<dyn MediaProvider>, creator: Option<UserId>) -> Self {
-    Self {
-      provider,
-      creator
-    }
+    Self { provider, creator }
   }
 }

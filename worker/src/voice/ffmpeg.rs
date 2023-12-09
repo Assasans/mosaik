@@ -1,9 +1,10 @@
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
 use anyhow::anyhow;
-use tracing::debug;
 use decoder::{Decoder, RawError};
+use tracing::debug;
 use voice::provider::{SampleProvider, SampleProviderHandle};
 
 pub struct FFmpegSampleProvider {
@@ -21,7 +22,9 @@ impl FFmpegSampleProvider {
 
   pub fn open(&mut self, path: &str) -> anyhow::Result<()> {
     let mut decoder = self.decoder.lock().unwrap();
-    decoder.open_input(path).map_err(|code| anyhow!("ffmpeg error {}", code))
+    decoder
+      .open_input(path)
+      .map_err(|code| anyhow!("ffmpeg error {}", code))
   }
 
   pub fn init_filters(&mut self, description: &str) -> Result<(), RawError> {
@@ -34,9 +37,7 @@ impl SampleProvider for FFmpegSampleProvider {
   fn get_samples(&mut self) -> Option<Vec<f32>> {
     let mut decoder = self.decoder.lock().unwrap();
     match decoder.read_frame(self.flushing) {
-      Some(read) => {
-        Some(read)
-      },
+      Some(read) => Some(read),
       None => {
         if !self.flushing {
           debug!("flushing decoder...");

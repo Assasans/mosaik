@@ -9,9 +9,9 @@ macro_rules! try_unpack {
   ($value:expr, $variant:path) => {{
     match $value {
       $variant(x) => Ok(x),
-      _ => Err($crate::util::MismatchError),
+      _ => Err($crate::util::MismatchError)
     }
-  }}
+  }};
 }
 
 #[macro_export]
@@ -34,7 +34,7 @@ macro_rules! interaction_response {
 macro_rules! get_option {
   ($command:expr, $name:expr) => {
     $command.options.iter().find(|it| it.name == $name).map(|it| it.value)
-  }
+  };
 }
 
 #[macro_export]
@@ -42,7 +42,7 @@ macro_rules! get_option_as {
   ($command:expr, $name:expr, $type:path) => {{
     let value = $command.options.iter().find(|it| it.name == $name).map(|it| &it.value);
     value.map(|it| try_unpack!(it, $type))
-  }}
+  }};
 }
 
 #[macro_export]
@@ -52,7 +52,7 @@ macro_rules! reply {
       .http
       .interaction($state.application_id)
       .create_response($interaction.id, &$interaction.token, $response)
-  }
+  };
 }
 
 #[macro_export]
@@ -62,5 +62,5 @@ macro_rules! update_reply {
       .http
       .interaction($state.application_id)
       .update_response(&$interaction.token)
-  }
+  };
 }

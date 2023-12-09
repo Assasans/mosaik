@@ -1,20 +1,19 @@
-mod metadata;
 mod ffmpeg;
-mod yt_dlp;
+mod metadata;
 mod sberzvuk;
 mod vk;
-
-pub use metadata::*;
-pub use ffmpeg::*;
-pub use yt_dlp::*;
-pub use sberzvuk::*;
-pub use vk::*;
+mod yt_dlp;
 
 use std::fmt::Debug;
+
 use anyhow::Result;
 use async_trait::async_trait;
-
+pub use ffmpeg::*;
+pub use metadata::*;
+pub use sberzvuk::*;
+pub use vk::*;
 use voice::provider::SampleProvider;
+pub use yt_dlp::*;
 
 #[async_trait]
 pub trait MediaProvider: Sync + Send + Debug {

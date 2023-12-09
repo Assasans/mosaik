@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+
 use async_trait::async_trait;
 use futures_channel::mpsc::UnboundedSender;
 use serenity::all::{ChannelId, GuildId, ShardRunnerMessage, UserId, VoiceGatewayManager, VoiceState};
@@ -60,7 +61,7 @@ impl VoiceGatewayManager for MosaikVoiceManager {
     info!(?user_id, ?shard_count, "voice manager initialized");
   }
 
-  async fn register_shard(&self, shard_id: u32, sender: UnboundedSender<ShardRunnerMessage>) {
+  async fn register_shard(&self, shard_id: u32, _sender: UnboundedSender<ShardRunnerMessage>) {
     info!(?shard_id, "register shard");
   }
 
@@ -70,7 +71,9 @@ impl VoiceGatewayManager for MosaikVoiceManager {
 
   async fn server_update(&self, guild_id: GuildId, endpoint: &Option<String>, token: &str) {
     let mut states = self.states.write().await;
-    let state = states.entry(guild_id).or_insert_with(|| MosaikVoiceState::new(guild_id));
+    let state = states
+      .entry(guild_id)
+      .or_insert_with(|| MosaikVoiceState::new(guild_id));
     state.endpoint = endpoint.clone();
     state.token = Some(token.to_owned());
     debug!("voice server update: {:?}", state);
@@ -79,7 +82,9 @@ impl VoiceGatewayManager for MosaikVoiceManager {
 
   async fn state_update(&self, guild_id: GuildId, voice_state: &VoiceState) {
     let mut states = self.states.write().await;
-    let state = states.entry(guild_id).or_insert_with(|| MosaikVoiceState::new(guild_id));
+    let state = states
+      .entry(guild_id)
+      .or_insert_with(|| MosaikVoiceState::new(guild_id));
     state.channel_id = voice_state.channel_id;
     state.session_id = Some(voice_state.session_id.clone());
     debug!("voice state update: {:?}", state);

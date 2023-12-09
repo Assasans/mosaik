@@ -1,13 +1,15 @@
 use std::time::SystemTime;
-use anyhow::{Result, Context, anyhow};
+
+use anyhow::{anyhow, Context, Result};
 use flume::{Receiver, Sender};
 use futures_util::{SinkExt, StreamExt};
 use tokio::select;
-use tokio_tungstenite::{connect_async, tungstenite::{Message, protocol::CloseFrame}};
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, warn};
-use crate::Resume;
 
-use super::{Hello, Ready, VoiceConnectionOptions, Speaking, GatewayPacket, GatewayEvent, Identify};
+use super::{GatewayEvent, GatewayPacket, Hello, Identify, Ready, Resume, Speaking, VoiceConnectionOptions};
 
 pub struct WebSocketVoiceConnection {
   pub read: Receiver<GatewayPacket>,
@@ -22,7 +24,10 @@ pub struct WebSocketVoiceConnection {
 
 pub enum VoiceConnectionMode {
   New(VoiceConnectionOptions),
-  Resume { options: VoiceConnectionOptions, ready: Ready }
+  Resume {
+    options: VoiceConnectionOptions,
+    ready: Ready
+  }
 }
 
 impl WebSocketVoiceConnection {
@@ -111,13 +116,13 @@ impl WebSocketVoiceConnection {
               if hello.is_some() {
                 break;
               }
-            },
+            }
             GatewayEvent::Hello(it) => {
               hello = Some(it);
               if ready.is_some() {
                 break;
               }
-            },
+            }
             other => {
               warn!("Expected Ready or Hello packet, got: {:?}", other);
               return Err(anyhow!("Invalid packet")); // TODO
@@ -143,13 +148,13 @@ impl WebSocketVoiceConnection {
               if resumed {
                 break;
               }
-            },
+            }
             GatewayEvent::Resumed => {
               resumed = true;
               if hello.is_some() {
                 break;
               }
-            },
+            }
             other => {
               warn!("Expected Resumed or Hello packet, got: {:?}", other);
               return Err(anyhow!("Invalid packet")); // TODO
@@ -169,31 +174,46 @@ impl WebSocketVoiceConnection {
   pub async fn send_speaking(&self, speaking: bool) -> Result<()> {
     let ready = self.ready.as_ref().context("no voice ready packet")?;
 
-    self.send(GatewayEvent::Speaking(Speaking {
-      speaking: if speaking { 1 } else { 0 },
-      delay: 0,
-      ssrc: ready.ssrc
-    }).try_into()?).await?;
+    self
+      .send(
+        GatewayEvent::Speaking(Speaking {
+          speaking: if speaking { 1 } else { 0 },
+          delay: 0,
+          ssrc: ready.ssrc
+        })
+        .try_into()?
+      )
+      .await?;
 
     Ok(())
   }
 
   pub async fn send_identify(&self) -> Result<()> {
-    self.send(GatewayEvent::Identify(Identify {
-      server_id: self.options.guild_id,
-      user_id: self.options.user_id,
-      session_id: self.options.session_id.to_owned(),
-      token: self.options.token.to_owned()
-    }).try_into()?).await?;
+    self
+      .send(
+        GatewayEvent::Identify(Identify {
+          server_id: self.options.guild_id,
+          user_id: self.options.user_id,
+          session_id: self.options.session_id.to_owned(),
+          token: self.options.token.to_owned()
+        })
+        .try_into()?
+      )
+      .await?;
     Ok(())
   }
 
   pub async fn send_resume(&self) -> Result<()> {
-    self.send(GatewayEvent::Resume(Resume {
-      server_id: self.options.guild_id,
-      session_id: self.options.session_id.to_owned(),
-      token: self.options.token.to_owned()
-    }).try_into()?).await?;
+    self
+      .send(
+        GatewayEvent::Resume(Resume {
+          server_id: self.options.guild_id,
+          session_id: self.options.session_id.to_owned(),
+          token: self.options.token.to_owned()
+        })
+        .try_into()?
+      )
+      .await?;
     Ok(())
   }
 

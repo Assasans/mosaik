@@ -1,4 +1,5 @@
 use std::fmt;
+
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 use self::GatewayCloseCode::*;
@@ -22,10 +23,7 @@ pub enum GatewayCloseCode {
 
 impl GatewayCloseCode {
   pub fn can_reconnect(self) -> bool {
-    matches!(
-      self,
-      VoiceServerCrashed
-    )
+    matches!(self, VoiceServerCrashed)
   }
 }
 

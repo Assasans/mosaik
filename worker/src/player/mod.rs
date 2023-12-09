@@ -1,26 +1,23 @@
-pub mod track;
 pub mod queue;
+pub mod track;
 
-use std::sync::{Arc, RwLock};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use anyhow::{Result, Context, anyhow};
-use async_trait::async_trait;
-use futures_util::StreamExt;
+use anyhow::{anyhow, Context, Result};
 use serde_json::json;
-use serenity::all::{Cache, ChannelId, Event, GuildId, UserId, VoiceState};
-use serenity::collector::collect;
+use serenity::all::{Cache, ChannelId, GuildId};
 use serenity::constants::Opcode;
-use serenity::gateway::{ShardMessenger, ShardRunnerMessage, VoiceGatewayManager};
+use serenity::gateway::{ShardMessenger, ShardRunnerMessage};
 use tokio::sync::oneshot;
 use tokio::time;
 use tracing::{debug, warn};
+use voice::{VoiceConnection, VoiceConnectionOptions, VoiceConnectionState};
 
-use voice::{VoiceConnectionOptions, VoiceConnection, VoiceConnectionState};
 use crate::player::queue::Queue;
-use crate::State;
 use crate::voice::MosaikVoiceManager;
+use crate::State;
 
 pub enum PlayerEvent {
   TrackFinished(usize)
@@ -69,7 +66,12 @@ impl Player {
     *self.guild_id.read().unwrap()
   }
 
-  pub async fn connect(self: &Arc<Self>, voice_manager: &MosaikVoiceManager, cache: &Cache, shard: &ShardMessenger) -> Result<()> {
+  pub async fn connect(
+    self: &Arc<Self>,
+    voice_manager: &MosaikVoiceManager,
+    cache: &Cache,
+    shard: &ShardMessenger
+  ) -> Result<()> {
     let guild_id = self.get_guild();
     let channel_id = self.get_channel().context("no voice channel")?;
 
@@ -77,15 +79,18 @@ impl Player {
     voice_manager.callbacks.write().await.insert(guild_id, tx);
 
     // Serenity...
-    shard.send_to_shard(ShardRunnerMessage::Message(serde_json::to_string(&json!({
-      "op": Opcode::VoiceStateUpdate,
-      "d": {
-        "guild_id": guild_id,
-        "channel_id": channel_id,
-        "self_mute": false,
-        "self_deaf": true
-      }
-    }))?.into()));
+    shard.send_to_shard(ShardRunnerMessage::Message(
+      serde_json::to_string(&json!({
+        "op": Opcode::VoiceStateUpdate,
+        "d": {
+          "guild_id": guild_id,
+          "channel_id": channel_id,
+          "self_mute": false,
+          "self_deaf": true
+        }
+      }))?
+      .into()
+    ));
 
     let state = rx.await.unwrap();
     debug!(?state, "got connection info");
@@ -161,7 +166,11 @@ impl Player {
     self.connection.stop_udp_loop.store(true, Ordering::Relaxed);
 
     debug!("waiting for udp loop to exit...");
-    self.connection.state.wait_for(|state| *state != VoiceConnectionState::Playing).await;
+    self
+      .connection
+      .state
+      .wait_for(|state| *state != VoiceConnectionState::Playing)
+      .await;
 
     Ok(())
   }
@@ -184,8 +193,15 @@ impl Player {
       VoiceConnection::run_udp_loop(clone).await.unwrap();
 
       // If stop_udp_loop is not set - send PlayerEvent::TrackFinished
-      if let Err(_) = x.connection.stop_udp_loop.compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed) {
-        x.tx.send_async(PlayerEvent::TrackFinished(x.queue.position())).await.unwrap();
+      if let Err(_) = x
+        .connection
+        .stop_udp_loop
+        .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+      {
+        x.tx
+          .send_async(PlayerEvent::TrackFinished(x.queue.position()))
+          .await
+          .unwrap();
       }
     });
 

@@ -1,9 +1,7 @@
-use std::{path::{Path, PathBuf}};
-
 use anyhow::Result;
 use async_trait::async_trait;
-
 use voice::provider::SampleProvider;
+
 use super::{MediaMetadata, MediaProvider};
 use crate::voice::ffmpeg::FFmpegSampleProvider;
 
@@ -14,9 +12,7 @@ pub struct FFmpegMediaProvider {
 
 impl FFmpegMediaProvider {
   pub fn new(path: String) -> Self {
-    Self {
-      path
-    }
+    Self { path }
   }
 }
 

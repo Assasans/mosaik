@@ -1,5 +1,6 @@
 use std::fmt;
-use serde::{Serialize, Deserialize};
+
+use serde::{Deserialize, Serialize};
 
 use self::GatewayOpcode::*;
 
@@ -71,13 +72,19 @@ impl From<u8> for GatewayOpcode {
 }
 
 impl Serialize for GatewayOpcode {
-  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer
+  {
     serializer.serialize_u8((*self).into())
   }
 }
 
 impl<'de> Deserialize<'de> for GatewayOpcode {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: serde::Deserializer<'de> {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: serde::Deserializer<'de>
+  {
     let value = u8::deserialize(deserializer)?;
     Ok(value.into())
   }

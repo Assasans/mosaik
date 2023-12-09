@@ -34,5 +34,3 @@ macro_rules! get_metadata {
     })
   };
 }
-
-pub(crate) use get_metadata;

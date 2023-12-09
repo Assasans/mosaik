@@ -1,6 +1,7 @@
 use std::fmt::{Debug, Formatter};
-use std::sync::{Arc, RwLock, Weak};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, RwLock, Weak};
+
 use crate::player::track::Track;
 
 #[derive(Debug)]
@@ -62,7 +63,7 @@ pub trait PlayMode: Send + Sync + Debug {
 pub struct UninitializedPlayMode;
 
 impl PlayMode for UninitializedPlayMode {
-  fn seek(&self, offset: isize, force: bool) -> Option<usize> {
+  fn seek(&self, _offset: isize, _force: bool) -> Option<usize> {
     unreachable!()
   }
 }
@@ -84,7 +85,7 @@ impl NormalPlayMode {
 }
 
 impl PlayMode for NormalPlayMode {
-  fn seek(&self, offset: isize, force: bool) -> Option<usize> {
+  fn seek(&self, offset: isize, _force: bool) -> Option<usize> {
     let queue = match self.queue.upgrade() {
       Some(queue) => queue,
       None => unreachable!("queue droppped")
@@ -117,7 +118,7 @@ impl LoopPlayMode {
 }
 
 impl PlayMode for LoopPlayMode {
-  fn seek(&self, offset: isize, force: bool) -> Option<usize> {
+  fn seek(&self, offset: isize, _force: bool) -> Option<usize> {
     assert_eq!(offset, 1); // TODO(Assasans): Not implemented
 
     let queue = match self.queue.upgrade() {

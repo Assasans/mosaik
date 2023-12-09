@@ -1,22 +1,27 @@
-pub mod util;
 pub mod commands;
-pub mod providers;
-pub mod voice;
 pub mod player;
+pub mod providers;
+pub mod util;
+pub mod voice;
 
-use serenity::prelude::*;
-use player::Player;
-use tracing_subscriber::{layer::SubscriberExt, filter::EnvFilter, util::SubscriberInitExt};
-
-use std::{collections::HashMap, env, error::Error, future::Future, sync::Arc};
-use std::cell::OnceCell;
-use std::fmt::{Debug, Write};
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::env;
+use std::error::Error;
+use std::fmt::Write;
+use std::future::Future;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+
+use player::Player;
 use regex::Regex;
-use serenity::all::{Cache, GuildId};
-use tokio::sync::{Mutex, RwLock};
+use serenity::all::GuildId;
+use serenity::prelude::*;
+use tokio::sync::RwLock;
 use tracing::{error, info};
+use tracing_subscriber::filter::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
 use crate::voice::MosaikVoiceManager;
 
 pub type State = Arc<StateRef>;
@@ -25,9 +30,7 @@ pub struct StateRef {
   players: RwLock<HashMap<GuildId, Arc<Player>>>
 }
 
-fn spawn(
-  fut: impl Future<Output = Result<(), Box<dyn Error + Send + Sync + 'static>>> + Send + 'static,
-) {
+fn spawn(fut: impl Future<Output = Result<(), Box<dyn Error + Send + Sync + 'static>>> + Send + 'static) {
   tokio::spawn(async move {
     if let Err(why) = fut.await {
       tracing::debug!("handler error: {:?}", why);
@@ -56,7 +59,9 @@ type PoiseContext<'a> = poise::Context<'a, State, AnyError>;
 
 fn pretty_print_error(error: anyhow::Error) -> String {
   let mut fmt = String::new();
-  fmt.write_fmt(format_args!("\u{001b}[2;31m{}\u{001b}[0m\n", error)).unwrap();
+  fmt
+    .write_fmt(format_args!("\u{001b}[2;31m{}\u{001b}[0m\n", error))
+    .unwrap();
 
   let backtrace = error.backtrace().to_string();
   let regex = Regex::new(r"(\d+): (.+)\n\s*at (.+)(?::(\d+):(\d+))+?").unwrap();
@@ -79,16 +84,24 @@ fn pretty_print_error(error: anyhow::Error) -> String {
     } else {
       "30"
     };
-    fmt.write_fmt(format_args!("\u{001b}[2;34m{index:>2}: \u{001b}[2;{color}m{frame}\u{001b}[0m")).unwrap();
+    fmt
+      .write_fmt(format_args!(
+        "\u{001b}[2;34m{index:>2}: \u{001b}[2;{color}m{frame}\u{001b}[0m"
+      ))
+      .unwrap();
     fmt.push_str("\n");
     if !file.contains("/rustc/") && !file.contains("/.cargo/") {
-      fmt.write_fmt(format_args!("    at \u{001b}[1;2m{file}\u{001b}[0m:{line}:{column}")).unwrap();
+      fmt
+        .write_fmt(format_args!("    at \u{001b}[1;2m{file}\u{001b}[0m:{line}:{column}"))
+        .unwrap();
       fmt.push_str("\n");
     }
   }
 
   if skipped > 0 {
-    fmt.write_fmt(format_args!("    \u{001b}[2;32m{skipped} more frames...\u{001b}[0m")).unwrap();
+    fmt
+      .write_fmt(format_args!("    \u{001b}[2;32m{skipped} more frames...\u{001b}[0m"))
+      .unwrap();
   }
 
   return fmt;
@@ -102,7 +115,14 @@ async fn on_error(error: poise::FrameworkError<'_, State, AnyError>) {
     poise::FrameworkError::Setup { error, .. } => panic!("Failed to start bot: {:?}", error),
     poise::FrameworkError::Command { error, ctx, .. } => {
       error!("Error in command `{}`: {:?}", ctx.command().name, error);
-      ctx.reply(format!("Error in command `{}`:```ansi\n{}\n```", ctx.command().name, pretty_print_error(error))).await.unwrap();
+      ctx
+        .reply(format!(
+          "Error in command `{}`:```ansi\n{}\n```",
+          ctx.command().name,
+          pretty_print_error(error)
+        ))
+        .await
+        .unwrap();
     }
     error => {
       if let Err(error) = poise::builtins::on_error(error).await {
@@ -163,10 +183,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     skip_checks_for_owners: false,
     event_handler: |_ctx, event, _framework, _data| {
       Box::pin(async move {
-        info!(
-          "Got an event in event handler: {:?}",
-          event.snake_case_name()
-        );
+        info!("Got an event in event handler: {:?}", event.snake_case_name());
         Ok(())
       })
     },
@@ -177,7 +194,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     .setup(move |ctx, _ready, framework| {
       Box::pin(async move {
         info!("Logged in as {}", _ready.user.name);
-        poise::builtins::register_in_guild(ctx, &framework.options().commands, GuildId::from(1171104054131314708)).await?;
+        poise::builtins::register_in_guild(ctx, &framework.options().commands, GuildId::from(1171104054131314708))
+          .await?;
 
         Ok(Arc::new(StateRef {
           players: Default::default()
@@ -191,11 +209,14 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
   VOICE_MANAGER.set(voice_manager.clone()).unwrap();
 
   let token = env::var("DISCORD_TOKEN").expect("token");
-  let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_VOICE_STATES
-    | GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+  let intents = GatewayIntents::GUILDS
+    | GatewayIntents::GUILD_VOICE_STATES
+    | GatewayIntents::GUILD_MESSAGES
+    | GatewayIntents::MESSAGE_CONTENT;
   let mut client = Client::builder(token, intents)
     .voice_manager_arc(voice_manager)
-    .framework(framework).await
+    .framework(framework)
+    .await
     .expect("Error creating client");
 
   if let Err(why) = client.start().await {

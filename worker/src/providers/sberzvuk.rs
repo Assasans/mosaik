@@ -9,10 +9,9 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::debug;
-
 use voice::provider::SampleProvider;
-use crate::providers::metadata;
-use super::{MediaMetadata, MediaProvider, FFmpegMediaProvider};
+
+use super::{metadata, FFmpegMediaProvider, MediaMetadata, MediaProvider};
 
 #[derive(Debug)]
 pub struct SberzvukMediaProvider {
@@ -35,53 +34,61 @@ impl SberzvukMediaProvider {
 impl MediaProvider for SberzvukMediaProvider {
   async fn init(&mut self) -> Result<()> {
     let client = Client::new();
-    let profile = client.get("https://zvuk.com/api/tiny/profile")
-      .send().await?
-      .json::<ProfileWrapper>().await?;
+    let profile = client
+      .get("https://zvuk.com/api/tiny/profile")
+      .send()
+      .await?
+      .json::<ProfileWrapper>()
+      .await?;
     debug!("token: {}", profile.result.token);
 
     let body = serde_json::to_string(&GraphQlRequest {
       operation_name: "getStream".to_owned(),
-      variables: HashMap::from([
-        ("ids".to_string(), vec![self.id].into())
-      ]),
+      variables: HashMap::from([("ids".to_string(), vec![self.id].into())]),
       query: GET_STREAM_QUERY
     })?;
     debug!("request body: {}", body);
 
-    let response = client.post("https://zvuk.com/api/v1/graphql")
+    let response = client
+      .post("https://zvuk.com/api/v1/graphql")
       .header("Content-Type", "application/json")
       .header("X-Auth-Token", &profile.result.token)
       .body(body)
-      .send().await?;
+      .send()
+      .await?;
     let body = response.text().await?;
     debug!("response: {}", body);
 
     let mut body = serde_json::from_str::<ResponseWrapper<GetStreamResponse>>(&body)?;
 
-    self.track = Some({
-      let body = serde_json::to_string(&GraphQlRequest {
-        operation_name: "getFullTrack".to_owned(),
-        variables: HashMap::from([
-          ("ids".to_owned(), vec![self.id].into()),
-          ("withArtists".to_owned(), true.into()),
-          ("withReleases".to_owned(), true.into())
-        ]),
-        query: GET_TRACK_QUERY
-      })?;
-      debug!("request body: {}", body);
+    self.track = Some(
+      {
+        let body = serde_json::to_string(&GraphQlRequest {
+          operation_name: "getFullTrack".to_owned(),
+          variables: HashMap::from([
+            ("ids".to_owned(), vec![self.id].into()),
+            ("withArtists".to_owned(), true.into()),
+            ("withReleases".to_owned(), true.into())
+          ]),
+          query: GET_TRACK_QUERY
+        })?;
+        debug!("request body: {}", body);
 
-      let response = client.post("https://zvuk.com/api/v1/graphql")
-        .header("Content-Type", "application/json")
-        .header("X-Auth-Token", &profile.result.token)
-        .body(body)
-        .send().await?;
-      let body = response.text().await?;
-      debug!("response: {}", body);
+        let response = client
+          .post("https://zvuk.com/api/v1/graphql")
+          .header("Content-Type", "application/json")
+          .header("X-Auth-Token", &profile.result.token)
+          .body(body)
+          .send()
+          .await?;
+        let body = response.text().await?;
+        debug!("response: {}", body);
 
-      let mut body = serde_json::from_str::<ResponseWrapper<GetTrackResponse>>(&body)?;
-      body.data.get_tracks.swap_remove(0)
-    }.into());
+        let mut body = serde_json::from_str::<ResponseWrapper<GetTrackResponse>>(&body)?;
+        body.data.get_tracks.swap_remove(0)
+      }
+      .into()
+    );
 
     let content = body.data.media_contents.swap_remove(0);
     self.stream = Some(content.stream);
@@ -254,7 +261,7 @@ pub struct Stream {
   pub expire_delta: i64,
   pub flacdrm: Option<String>,
   pub high: Option<String>,
-  pub mid: String,
+  pub mid: String
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
@@ -337,7 +344,7 @@ pub struct Release {
   pub label: Label,
   pub availability: i64,
   #[serde(rename = "artistTemplate")]
-  pub artist_template: String,
+  pub artist_template: String
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]

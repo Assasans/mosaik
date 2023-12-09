@@ -1,15 +1,16 @@
-use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Result, Context};
-use async_trait::async_trait;
+use anyhow::{Context, Result};
 use serenity::all::ShardId;
 use tracing::info;
 use voice::VoiceConnectionState;
 
-use crate::{try_unpack, State, interaction_response, get_option_as, player::Player, reply, update_reply, providers::{MediaProvider, FFmpegMediaProvider}, PoiseContext, AnyError, VOICE_MANAGER};
 use crate::player::track::Track;
-use crate::providers::{SberzvukMediaProvider, VkMediaProvider, YtDlpMediaProvider};
+use crate::player::Player;
+use crate::providers::{
+  FFmpegMediaProvider, MediaProvider, SberzvukMediaProvider, VkMediaProvider, YtDlpMediaProvider
+};
+use crate::{AnyError, PoiseContext, VOICE_MANAGER};
 
 #[poise::command(prefix_command, track_edits, slash_command)]
 pub async fn play(
@@ -22,7 +23,12 @@ pub async fn play(
   let guild_id = ctx.guild_id().unwrap();
 
   // TODO: The fuck
-  let voice_state = ctx.guild().unwrap().voice_states.get(&author.id).map(|it| it.to_owned());
+  let voice_state = ctx
+    .guild()
+    .unwrap()
+    .voice_states
+    .get(&author.id)
+    .map(|it| it.to_owned());
   if voice_state.is_none() {
     ctx.reply("You are not in a voice channel").await.unwrap();
   }
@@ -32,7 +38,9 @@ pub async fn play(
 
   let state = ctx.data();
   let mut players = state.players.write().await;
-  let player = players.entry(guild_id).or_insert_with(|| Arc::new(Player::new(state.clone(), guild_id)));
+  let player = players
+    .entry(guild_id)
+    .or_insert_with(|| Arc::new(Player::new(state.clone(), guild_id)));
 
   player.set_channel(channel_id.unwrap());
   if !player.connection.is_connected() {
@@ -41,7 +49,9 @@ pub async fn play(
     let shards = shard_manager.runners.lock().await;
     let shard = shards.get(&shard_id).unwrap();
 
-    player.connect(VOICE_MANAGER.get().unwrap().as_ref(), ctx.cache(), &shard.runner_tx).await?;
+    player
+      .connect(VOICE_MANAGER.get().unwrap().as_ref(), ctx.cache(), &shard.runner_tx)
+      .await?;
   }
 
   // TODO(Assasans): Internal code
@@ -57,11 +67,8 @@ pub async fn play(
     "zvuk" => Box::new(SberzvukMediaProvider::new(input.parse::<i64>()?)),
     "vk" => {
       let (owner_id, track_id) = input.split_once('_').unwrap();
-      Box::new(VkMediaProvider::new(
-        owner_id.parse::<i64>()?,
-        track_id.parse::<i64>()?
-      ))
-    },
+      Box::new(VkMediaProvider::new(owner_id.parse::<i64>()?, track_id.parse::<i64>()?))
+    }
     _ => todo!("media provider {} is not implemented", provider)
   };
   provider.init().await?;
@@ -75,11 +82,18 @@ pub async fn play(
   }
 
   let metadata = track.provider.get_metadata().await?;
-  let metadata_string = metadata.iter()
+  let metadata_string = metadata
+    .iter()
     .map(|it| format!("`{:?}`", it))
     .collect::<Vec<String>>()
     .join("\n");
 
-  ctx.reply(format!("Added track `{:?}` to queue\n{}", track.provider, metadata_string)).await.unwrap();
+  ctx
+    .reply(format!(
+      "Added track `{:?}` to queue\n{}",
+      track.provider, metadata_string
+    ))
+    .await
+    .unwrap();
   Ok(())
 }

@@ -1,18 +1,14 @@
 use std::borrow::ToOwned;
-use std::collections::HashMap;
 use std::env;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use debug_ignore::DebugIgnore;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tracing::debug;
-
 use voice::provider::SampleProvider;
-use crate::providers::metadata;
-use super::{MediaMetadata, MediaProvider, FFmpegMediaProvider};
+
+use super::{metadata, FFmpegMediaProvider, MediaMetadata, MediaProvider};
 
 #[derive(Debug)]
 pub struct VkMediaProvider {
@@ -35,13 +31,15 @@ impl VkMediaProvider {
 impl MediaProvider for VkMediaProvider {
   async fn init(&mut self) -> Result<()> {
     let client = Client::new();
-    let response = client.get("https://api.vk.com/method/audio.getById")
+    let response = client
+      .get("https://api.vk.com/method/audio.getById")
       .query(&[
         ("audios", format!("{}_{}", self.owner_id, self.track_id).as_str()),
         ("access_token", &env::var("VK_ACCESS_TOKEN").unwrap()),
         ("v", "5.221")
       ])
-      .send().await?;
+      .send()
+      .await?;
     let body = response.text().await?;
     debug!("response: {}", body);
 

@@ -1,53 +1,49 @@
-pub mod constants;
-pub mod opcode;
-pub mod event;
-pub mod provider;
-pub mod ws;
-pub mod udp;
-pub mod close_code;
 pub mod buffer;
+pub mod close_code;
+pub mod constants;
+pub mod event;
+pub mod opcode;
+pub mod provider;
+pub mod udp;
+pub mod ws;
 
-use tokio::{sync::Mutex, select, time::{interval, Interval}};
-use tracing::*;
-use std::{
-  io,
-  fmt::Debug,
-  net::IpAddr,
-  str::FromStr,
-  sync::{Arc, Weak},
-  time::{Duration, Instant}
-};
+use std::fmt::Debug;
+use std::io;
+use std::net::IpAddr;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use opus::{Encoder, Bitrate, Channels, Application};
-use anyhow::{Result, anyhow, Context};
-use discortp::{
-  MutablePacket,
-  discord::{IpDiscoveryPacket, MutableIpDiscoveryPacket, IpDiscoveryType},
-  rtp::{MutableRtpPacket, RtpType},
-  rtcp::report::{MutableReceiverReportPacket, ReportBlockPacket}
-};
+use std::sync::{Arc, Weak};
+use std::time::{Duration, Instant};
+
+use anyhow::{anyhow, Context, Result};
+use discortp::discord::{IpDiscoveryPacket, IpDiscoveryType, MutableIpDiscoveryPacket};
+use discortp::rtcp::report::{MutableReceiverReportPacket, ReportBlockPacket};
+use discortp::rtp::{MutableRtpPacket, RtpType};
+use discortp::MutablePacket;
+pub use event::*;
+pub use opcode::*;
+use opus::{Application, Bitrate, Channels, Encoder};
 use rand::random;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::RwLock;
-use tokio_tungstenite::{tungstenite::protocol::{CloseFrame, frame::coding::CloseCode}};
-use xsalsa20poly1305::{aead::generic_array::GenericArray, TAG_SIZE, XSalsa20Poly1305, KeyInit, Key, AeadInPlace};
-
-pub use opcode::*;
-pub use event::*;
-
+use tokio::select;
+use tokio::sync::{Mutex, RwLock};
+use tokio::time::{interval, Interval};
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+use tracing::*;
 use utils::state_flow::StateFlow;
+use xsalsa20poly1305::aead::generic_array::GenericArray;
+use xsalsa20poly1305::{AeadInPlace, Key, KeyInit, XSalsa20Poly1305, TAG_SIZE};
+
 use crate::buffer::SampleBuffer;
 use crate::close_code::GatewayCloseCode;
-use crate::constants::{OPUS_SILENCE_FRAME, OPUS_SILENCE_FRAMES};
-use crate::provider::SampleProviderHandle;
-use crate::ws::VoiceConnectionMode;
-use self::{
-  constants::{SAMPLE_RATE, CHANNEL_COUNT, CHUNK_DURATION, TIMESTAMP_STEP},
-  provider::SampleProvider,
-  ws::WebSocketVoiceConnection,
-  udp::UdpVoiceConnection
+use crate::constants::{
+  CHANNEL_COUNT, CHUNK_DURATION, OPUS_SILENCE_FRAME, OPUS_SILENCE_FRAMES, SAMPLE_RATE, TIMESTAMP_STEP
 };
+use crate::provider::{SampleProvider, SampleProviderHandle};
+use crate::udp::UdpVoiceConnection;
+use crate::ws::{VoiceConnectionMode, WebSocketVoiceConnection};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GatewayPacket {
@@ -58,7 +54,10 @@ pub struct GatewayPacket {
 }
 
 impl GatewayPacket {
-  pub fn new<T>(opcode: GatewayOpcode, data: T) -> Self where T: Into<Option<Value>> {
+  pub fn new<T>(opcode: GatewayOpcode, data: T) -> Self
+  where
+    T: Into<Option<Value>>
+  {
     Self {
       opcode,
       data: data.into()
@@ -140,7 +139,11 @@ impl VoiceConnection {
 
   pub async fn connect(&self, options: VoiceConnectionOptions) -> Result<()> {
     if let Some(bitrate) = options.bitrate {
-      self.opus_encoder.lock().await.set_bitrate(Bitrate::Bits(i32::try_from(bitrate)?))?;
+      self
+        .opus_encoder
+        .lock()
+        .await
+        .set_bitrate(Bitrate::Bits(i32::try_from(bitrate)?))?;
     }
     // self.opus_encoder.lock().await.set_inband_fec(true)?;
     // self.opus_encoder.lock().await.set_packet_loss_perc(50)?;
@@ -153,20 +156,25 @@ impl VoiceConnection {
     let hello = ws.hello.as_ref().context("no voice hello packet")?;
     let ready = ws.ready.as_ref().context("no voice ready packet")?;
 
-    *self.ws_heartbeat_interval.lock().await = Some(interval(Duration::from_millis(hello.heartbeat_interval.round() as u64)));
+    *self.ws_heartbeat_interval.lock().await =
+      Some(interval(Duration::from_millis(hello.heartbeat_interval.round() as u64)));
 
     *self.udp.lock().await = Some(UdpVoiceConnection::new(ready).await?);
 
     let ip = self.discover_udp_ip(ready).await?;
 
-    ws.send(GatewayEvent::SelectProtocol(SelectProtocol {
-      protocol: "udp".to_owned(),
-      data: SelectProtocolData {
-        address: ip.address,
-        port: ip.port,
-        mode: "xsalsa20_poly1305_suffix".to_owned()
-      }
-    }).try_into()?).await?;
+    ws.send(
+      GatewayEvent::SelectProtocol(SelectProtocol {
+        protocol: "udp".to_owned(),
+        data: SelectProtocolData {
+          address: ip.address,
+          port: ip.port,
+          mode: "xsalsa20_poly1305_suffix".to_owned()
+        }
+      })
+      .try_into()?
+    )
+    .await?;
 
     let session_description = loop {
       // Ignore undocumented opcode 18
@@ -201,7 +209,8 @@ impl VoiceConnection {
       ws.close(CloseFrame {
         code: CloseCode::Normal,
         reason: "".into()
-      }).await?;
+      })
+      .await?;
       *ws_lock = None;
     }
 
@@ -231,11 +240,7 @@ impl VoiceConnection {
       return Err(anyhow!("Invalid response")); // TODO
     }
 
-    let null_index = view
-      .get_address_raw()
-      .iter()
-      .position(|&b| b == 0)
-      .unwrap();
+    let null_index = view.get_address_raw().iter().position(|&b| b == 0).unwrap();
 
     Ok(IpDiscoveryResult {
       address: std::str::from_utf8(&view.get_address_raw()[..null_index]).map(|it| IpAddr::from_str(it))??,
@@ -303,18 +308,15 @@ impl VoiceConnection {
         payload[TAG_SIZE..TAG_SIZE + data.len()].copy_from_slice(&data);
         data.len()
       }
-      AudioFrame::Pcm(data) => {
-        self.opus_encoder.lock().await.encode_float(&data, &mut payload[TAG_SIZE..TAG_SIZE + rtp_buffer_length - 12 - nonce_bytes.len()])?
-      }
+      AudioFrame::Pcm(data) => self.opus_encoder.lock().await.encode_float(
+        &data,
+        &mut payload[TAG_SIZE..TAG_SIZE + rtp_buffer_length - 12 - nonce_bytes.len()]
+      )?
     };
 
     payload[TAG_SIZE + size..TAG_SIZE + size + nonce_bytes.len()].copy_from_slice(&nonce_bytes);
 
-    let tag = cipher.encrypt_in_place_detached(
-      nonce,
-      b"",
-      &mut payload[TAG_SIZE..TAG_SIZE + size]
-    );
+    let tag = cipher.encrypt_in_place_detached(nonce, b"", &mut payload[TAG_SIZE..TAG_SIZE + size]);
     match tag {
       Ok(tag) => {
         payload[..TAG_SIZE].copy_from_slice(tag.as_slice());
@@ -322,12 +324,15 @@ impl VoiceConnection {
         spin_sleep::sleep(udp.deadline - Instant::now());
         let delta = Instant::now().saturating_duration_since(udp.deadline);
         udp.deadline = Instant::now() + CHUNK_DURATION;
-        udp.socket.send(&udp.rtp_buffer[..12 + TAG_SIZE + size + nonce_bytes.len()]).await?;
+        udp
+          .socket
+          .send(&udp.rtp_buffer[..12 + TAG_SIZE + size + nonce_bytes.len()])
+          .await?;
 
         if delta > CHUNK_DURATION {
           warn!("Voice packet deadline exceeded by {:?}", delta - CHUNK_DURATION);
         }
-      },
+      }
       Err(error) => {
         return Err(anyhow!(error));
       }
@@ -417,10 +422,13 @@ impl VoiceConnection {
     let old_ws = ws.take().context("no voice gateway connection")?;
 
     debug!("reconnecting to voice gateway...");
-    *ws = Some(WebSocketVoiceConnection::new(VoiceConnectionMode::Resume {
-      options: old_ws.options,
-      ready: old_ws.ready.context("no voice ready packet")?
-    }).await?);
+    *ws = Some(
+      WebSocketVoiceConnection::new(VoiceConnectionMode::Resume {
+        options: old_ws.options,
+        ready: old_ws.ready.context("no voice ready packet")?
+      })
+      .await?
+    );
     Ok(())
   }
 
@@ -477,7 +485,8 @@ impl VoiceConnection {
 
       if me.paused.get() && me.silence_frames_left.load(Ordering::Relaxed) > 0 {
         me.silence_frames_left.fetch_sub(1, Ordering::SeqCst);
-        me.send_voice_packet(&ready, udp, AudioFrame::Opus(OPUS_SILENCE_FRAME.to_vec())).await?;
+        me.send_voice_packet(&ready, udp, AudioFrame::Opus(OPUS_SILENCE_FRAME.to_vec()))
+          .await?;
         if me.silence_frames_left.load(Ordering::Relaxed) == 0 {
           debug!("waiting for unpause...");
           me.paused.wait_for(|paused| *paused == false).await;

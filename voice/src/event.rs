@@ -1,8 +1,10 @@
 use std::net::IpAddr;
-use anyhow::{Result, Context};
-use serde::{Serialize, Deserialize};
 
-use super::{opcode::GatewayOpcode, GatewayPacket};
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+
+use super::opcode::GatewayOpcode;
+use super::GatewayPacket;
 
 #[derive(Clone, Debug)]
 pub enum GatewayEvent {
@@ -100,17 +102,21 @@ impl TryFrom<GatewayPacket> for GatewayEvent {
   type Error = anyhow::Error; // TODO
 
   fn try_from(packet: GatewayPacket) -> Result<GatewayEvent, Self::Error> {
+    use serde_json::from_value;
+    use GatewayOpcode::*;
+
+    let data = packet.data.context("no packet data");
     match packet.opcode {
-      GatewayOpcode::Identify => Ok(GatewayEvent::Identify(serde_json::from_value(packet.data.context("no packet data")?)?)),
-      GatewayOpcode::SelectProtocol => Ok(GatewayEvent::SelectProtocol(serde_json::from_value(packet.data.context("no packet data")?)?)),
-      GatewayOpcode::Ready => Ok(GatewayEvent::Ready(serde_json::from_value(packet.data.context("no packet data")?)?)),
-      GatewayOpcode::Heartbeat => Ok(GatewayEvent::Heartbeat(serde_json::from_value(packet.data.context("no packet data")?)?)),
-      GatewayOpcode::SessionDescription => Ok(GatewayEvent::SessionDescription(serde_json::from_value(packet.data.context("no packet data")?)?)),
-      GatewayOpcode::Speaking => Ok(GatewayEvent::Speaking(serde_json::from_value(packet.data.context("no packet data")?)?)),
-      GatewayOpcode::HeartbeatAck => Ok(GatewayEvent::HeartbeatAck(serde_json::from_value(packet.data.context("no packet data")?)?)),
-      GatewayOpcode::Resume => Ok(GatewayEvent::Resume(serde_json::from_value(packet.data.context("no packet data")?)?)),
-      GatewayOpcode::Hello => Ok(GatewayEvent::Hello(serde_json::from_value(packet.data.context("no packet data")?)?)),
-      GatewayOpcode::Resumed => Ok(GatewayEvent::Resumed),
+      Identify => Ok(GatewayEvent::Identify(from_value(data?)?)),
+      SelectProtocol => Ok(GatewayEvent::SelectProtocol(from_value(data?)?)),
+      Ready => Ok(GatewayEvent::Ready(from_value(data?)?)),
+      Heartbeat => Ok(GatewayEvent::Heartbeat(from_value(data?)?)),
+      SessionDescription => Ok(GatewayEvent::SessionDescription(from_value(data?)?)),
+      Speaking => Ok(GatewayEvent::Speaking(from_value(data?)?)),
+      HeartbeatAck => Ok(GatewayEvent::HeartbeatAck(from_value(data?)?)),
+      Resume => Ok(GatewayEvent::Resume(from_value(data?)?)),
+      Hello => Ok(GatewayEvent::Hello(from_value(data?)?)),
+      Resumed => Ok(GatewayEvent::Resumed),
       _ => Err(anyhow::anyhow!("Unsupported opcode: {}", packet.opcode))
     }
   }

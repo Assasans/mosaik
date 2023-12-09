@@ -1,6 +1,8 @@
 use std::time::Instant;
+
 use anyhow::Result;
-use discortp::{wrap::{Wrap16, Wrap32}, discord::MutableKeepalivePacket};
+use discortp::discord::MutableKeepalivePacket;
+use discortp::wrap::{Wrap16, Wrap32};
 use rand::random;
 use tokio::net::UdpSocket;
 use tracing::debug;

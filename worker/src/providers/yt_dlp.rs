@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::process::Command;
 use tracing::debug;
-
 use voice::provider::SampleProvider;
-use super::{MediaMetadata, MediaProvider, FFmpegMediaProvider, metadata};
+
+use super::{metadata, FFmpegMediaProvider, MediaMetadata, MediaProvider};
 
 #[derive(Debug)]
 pub struct YtDlpMediaProvider {
@@ -21,10 +21,7 @@ pub struct YtDlpMediaProvider {
 
 impl YtDlpMediaProvider {
   pub fn new(query: String) -> Self {
-    Self {
-      query,
-      data: None
-    }
+    Self { query, data: None }
   }
 }
 
@@ -37,7 +34,8 @@ impl MediaProvider for YtDlpMediaProvider {
       .stderr(Stdio::piped())
       .stdin(Stdio::piped())
       .spawn()?
-      .wait_with_output().await?;
+      .wait_with_output()
+      .await?;
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let data = self.data.insert(serde_json::from_str::<Value>(&stdout)?.into());
