@@ -1,16 +1,14 @@
-use twilight_model::id::Id;
-use twilight_model::id::marker::UserMarker;
-
+use serenity::all::UserId;
 use crate::providers::MediaProvider;
 
 #[derive(Debug)]
 pub struct Track {
   pub provider: Box<dyn MediaProvider>,
-  pub creator: Option<Id<UserMarker>>
+  pub creator: Option<UserId>
 }
 
 impl Track {
-  pub fn new(provider: Box<dyn MediaProvider>, creator: Option<Id<UserMarker>>) -> Self {
+  pub fn new(provider: Box<dyn MediaProvider>, creator: Option<UserId>) -> Self {
     Self {
       provider,
       creator

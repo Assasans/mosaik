@@ -1,26 +1,25 @@
 mod play;
-mod pause;
-mod filters;
-mod queue;
-mod debug;
-mod seek;
-mod jump;
 
 pub use play::*;
-pub use pause::*;
-pub use filters::*;
-pub use queue::*;
-pub use debug::*;
-pub use seek::*;
-pub use jump::*;
 
-use anyhow::Result;
-use async_trait::async_trait;
-use twilight_model::gateway::payload::incoming::InteractionCreate;
+use anyhow::bail;
+use crate::{State, PoiseContext, AnyError};
 
-use crate::State;
-
-#[async_trait]
-pub trait CommandHandler: Sync {
-  async fn run(&self, state: State, interaction: &InteractionCreate) -> Result<()>;
+/// Show this help menu
+#[poise::command(prefix_command, track_edits, slash_command)]
+pub async fn help(
+  ctx: PoiseContext<'_>,
+  #[description = "Specific command to show help about"]
+  #[autocomplete = "poise::builtins::autocomplete_command"]
+  command: Option<String>,
+) -> Result<(), AnyError> {
+  poise::builtins::help(
+    ctx,
+    command.as_deref(),
+    poise::builtins::HelpConfiguration {
+      extra_text_at_bottom: "This is an example bot made to showcase features of my custom Discord bot framework",
+      ..Default::default()
+    },
+  ).await?;
+  Ok(())
 }

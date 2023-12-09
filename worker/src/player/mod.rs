@@ -6,15 +6,21 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use anyhow::{Result, Context, anyhow};
+use async_trait::async_trait;
 use futures_util::StreamExt;
+use serde_json::json;
+use serenity::all::{Cache, ChannelId, Event, GuildId, UserId, VoiceState};
+use serenity::collector::collect;
+use serenity::constants::Opcode;
+use serenity::gateway::{ShardMessenger, ShardRunnerMessage, VoiceGatewayManager};
+use tokio::sync::oneshot;
 use tokio::time;
 use tracing::{debug, warn};
-use twilight_gateway::{Event, EventType};
-use twilight_model::{id::{Id, marker::{GuildMarker, ChannelMarker}}, gateway::payload::outgoing::UpdateVoiceState};
 
 use voice::{VoiceConnectionOptions, VoiceConnection, VoiceConnectionState};
 use crate::player::queue::Queue;
 use crate::State;
+use crate::voice::MosaikVoiceManager;
 
 pub enum PlayerEvent {
   TrackFinished(usize)
@@ -24,8 +30,8 @@ pub struct Player {
   pub state: State,
   pub connection: Arc<VoiceConnection>,
 
-  pub guild_id: RwLock<Id<GuildMarker>>,
-  pub channel_id: RwLock<Option<Id<ChannelMarker>>>,
+  pub guild_id: RwLock<GuildId>,
+  pub channel_id: RwLock<Option<ChannelId>>,
 
   pub queue: Arc<Queue>,
 
@@ -34,7 +40,7 @@ pub struct Player {
 }
 
 impl Player {
-  pub fn new(state: State, guild_id: Id<GuildMarker>) -> Self {
+  pub fn new(state: State, guild_id: GuildId) -> Self {
     let (tx, rx) = flume::bounded(16);
 
     Self {
@@ -51,57 +57,46 @@ impl Player {
     }
   }
 
-  pub fn set_channel(&self, channel_id: Id<ChannelMarker>) {
+  pub fn set_channel(&self, channel_id: ChannelId) {
     *self.channel_id.write().unwrap() = Some(channel_id);
   }
 
-  pub fn get_channel(&self) -> Option<Id<ChannelMarker>> {
+  pub fn get_channel(&self) -> Option<ChannelId> {
     *self.channel_id.read().unwrap()
   }
 
-  pub fn get_guild(&self) -> Id<GuildMarker> {
+  pub fn get_guild(&self) -> GuildId {
     *self.guild_id.read().unwrap()
   }
 
-  pub async fn connect(self: &Arc<Self>) -> Result<()> {
+  pub async fn connect(self: &Arc<Self>, voice_manager: &MosaikVoiceManager, cache: &Cache, shard: &ShardMessenger) -> Result<()> {
+    let guild_id = self.get_guild();
     let channel_id = self.get_channel().context("no voice channel")?;
-    self.state.sender.command(&UpdateVoiceState::new(self.get_guild(), channel_id, true, false))?;
 
-    let mut voice_state = None;
-    let mut voice_server = None;
+    let (tx, rx) = oneshot::channel();
+    voice_manager.callbacks.write().await.insert(guild_id, tx);
 
-    let mut stream = self.state.standby.wait_for_stream(self.get_guild(), |event: &Event| match event.kind() {
-      EventType::VoiceStateUpdate => true,
-      EventType::VoiceServerUpdate => true,
-      _ => false
-    });
-
-    while let Some(event) = stream.next().await {
-      match event {
-        Event::VoiceStateUpdate(vs) => voice_state = Some(vs),
-        Event::VoiceServerUpdate(vs) => voice_server = Some(vs),
-        _ => {}
+    // Serenity...
+    shard.send_to_shard(ShardRunnerMessage::Message(serde_json::to_string(&json!({
+      "op": Opcode::VoiceStateUpdate,
+      "d": {
+        "guild_id": guild_id,
+        "channel_id": channel_id,
+        "self_mute": false,
+        "self_deaf": true
       }
+    }))?.into()));
 
-      if voice_state.is_some() && voice_server.is_some() {
-        break;
-      }
-    };
-    let voice_state = voice_state.unwrap();
-    let voice_server = voice_server.unwrap();
-
-    debug!(?voice_state, ?voice_server, "got connection info");
-
-    let user = self.state.cache.current_user().context("no current user")?;
-    let channel = self.state.cache.channel(channel_id).context("no channel cached")?;
+    let state = rx.await.unwrap();
+    debug!(?state, "got connection info");
 
     let options = VoiceConnectionOptions {
-      user_id: user.id.get(),
+      user_id: cache.current_user().id.get(),
       guild_id: self.get_guild().get(),
-      bitrate: channel.bitrate,
-      endpoint: voice_server.endpoint.context("no voice endpoint")?.to_owned(),
-      token: voice_server.token.to_owned(),
-      session_id: voice_state.session_id.to_owned()
+      bitrate: cache.channel(channel_id).context("no channel cached")?.bitrate,
+      endpoint: state.endpoint.context("no voice endpoint")?,
+      token: state.token.unwrap(),
+      session_id: state.session_id.unwrap()
     };
     self.connection.connect(options).await?;
 

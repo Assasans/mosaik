@@ -4,33 +4,25 @@ pub mod providers;
 pub mod voice;
 pub mod player;
 
-use anyhow::Context;
-use commands::{CommandHandler, PlayCommand, PauseCommand, FiltersCommand, QueueCommand, DebugCommand, SeekCommand, JumpCommand};
+use serenity::prelude::*;
 use player::Player;
-use tracing_subscriber::{layer::SubscriberExt, EnvFilter, util::SubscriberInitExt};
-use twilight_cache_inmemory::InMemoryCache;
-use twilight_util::builder::{command::StringBuilder, InteractionResponseDataBuilder};
+use tracing_subscriber::{layer::SubscriberExt, filter::EnvFilter, util::SubscriberInitExt};
 
 use std::{collections::HashMap, env, error::Error, future::Future, sync::Arc};
+use std::cell::OnceCell;
 use std::fmt::{Debug, Write};
+use std::sync::OnceLock;
+use std::time::Duration;
 use regex::Regex;
+use serenity::all::{Cache, GuildId};
 use tokio::sync::{Mutex, RwLock};
-use twilight_gateway::{Shard, Event, Intents, ShardId, MessageSender};
-use twilight_http::Client as HttpClient;
-use twilight_model::{
-  id::{marker::{GuildMarker, ApplicationMarker}, Id}, application::{interaction::InteractionData}, http::interaction::{InteractionResponse, InteractionResponseType}, gateway::payload::outgoing::UpdateVoiceState,
-};
-use twilight_standby::Standby;
+use tracing::{error, info};
+use crate::voice::MosaikVoiceManager;
 
 pub type State = Arc<StateRef>;
 
 pub struct StateRef {
-  sender: MessageSender,
-  http: HttpClient,
-  cache: InMemoryCache,
-  application_id: Id<ApplicationMarker>,
-  players: RwLock<HashMap<Id<GuildMarker>, Arc<Player>>>,
-  standby: Standby,
+  players: RwLock<HashMap<GuildId, Arc<Player>>>
 }
 
 fn spawn(
@@ -59,6 +51,67 @@ macro_rules! argument {
   }};
 }
 
+type AnyError = anyhow::Error; // Box<dyn Error + Send + Sync>;
+type PoiseContext<'a> = poise::Context<'a, State, AnyError>;
+
+fn pretty_print_error(error: anyhow::Error) -> String {
+  let mut fmt = String::new();
+  fmt.write_fmt(format_args!("\u{001b}[2;31m{}\u{001b}[0m\n", error)).unwrap();
+
+  let backtrace = error.backtrace().to_string();
+  let regex = Regex::new(r"(\d+): (.+)\n\s*at (.+)(?::(\d+):(\d+))+?").unwrap();
+
+  let mut skipped = 0;
+  for capture in regex.captures_iter(&backtrace) {
+    let index = capture.get(1).unwrap().as_str().parse::<i32>().unwrap();
+    let frame = capture.get(2).unwrap().as_str();
+    let file = capture.get(3).unwrap().as_str();
+    let line = capture.get(4).map(|it| it.as_str()).unwrap_or("?");
+    let column = capture.get(5).map(|it| it.as_str()).unwrap_or("?");
+
+    if index >= 13 {
+      skipped += 1;
+      continue;
+    }
+
+    let color = if !file.contains("/rustc/") && !file.contains("/.cargo/") {
+      "33"
+    } else {
+      "30"
+    };
+    fmt.write_fmt(format_args!("\u{001b}[2;34m{index:>2}: \u{001b}[2;{color}m{frame}\u{001b}[0m")).unwrap();
+    fmt.push_str("\n");
+    if !file.contains("/rustc/") && !file.contains("/.cargo/") {
+      fmt.write_fmt(format_args!("    at \u{001b}[1;2m{file}\u{001b}[0m:{line}:{column}")).unwrap();
+      fmt.push_str("\n");
+    }
+  }
+
+  if skipped > 0 {
+    fmt.write_fmt(format_args!("    \u{001b}[2;32m{skipped} more frames...\u{001b}[0m")).unwrap();
+  }
+
+  return fmt;
+}
+
+async fn on_error(error: poise::FrameworkError<'_, State, AnyError>) {
+  // This is our custom error handler
+  // They are many errors that can occur, so we only handle the ones we want to customize
+  // and forward the rest to the default handler
+  match error {
+    poise::FrameworkError::Setup { error, .. } => panic!("Failed to start bot: {:?}", error),
+    poise::FrameworkError::Command { error, ctx, .. } => {
+      error!("Error in command `{}`: {:?}", ctx.command().name, error);
+      ctx.reply(format!("Error in command `{}`:```ansi\n{}\n```", ctx.command().name, pretty_print_error(error))).await.unwrap();
+    }
+    error => {
+      if let Err(error) = poise::builtins::on_error(error).await {
+        error!("Error while handling error: {}", error)
+      }
+    }
+  }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
   if env::var("MOSAIK_DEBUG_TRACY").map_or(false, |it| it == "1") {
@@ -72,220 +125,84 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
       .with_env_filter(EnvFilter::from_default_env())
       .init();
   }
+  info!("hello");
 
-  let guild_id = Id::<GuildMarker>::new(env::var("DISCORD_TEST_GUILD")?.parse()?);
-  let (mut shard, state) = {
-    let token = env::var("DISCORD_TOKEN")?;
-
-    let http = HttpClient::new(token.clone());
-    let cache = InMemoryCache::new();
-    let user_id = http.current_user().await?.model().await?.id;
-    let application_id = http.current_user_application().await?.model().await?.id;
-    let interactions = http.interaction(application_id);
-
-    interactions
-      .create_guild_command(guild_id)
-      .chat_input("play", "Play a track")?
-      .description_localizations(&localizations! {
-        "ru" => "Включить трек"
-      })?
-      .command_options(&[
-        argument!(
-          StringBuilder,
-          "source",
-          "Search query or URL",
-          required(true),
-          description_localizations(&localizations! {
-            "ru" => "Поисковый запрос или ссылка"
-          })
-        )
-      ])?
-      .await?;
-
-    interactions
-      .create_guild_command(guild_id)
-      .chat_input("pause", "Play or pause a track")?
-      .description_localizations(&localizations! {
-        "ru" => "Поставить трек на паузу"
-      })?
-      .await?;
-
-    interactions
-      .create_guild_command(guild_id)
-      .chat_input("filters", "FILTERS")?
-      .description_localizations(&localizations! {
-        "ru" => "Фильтры"
-      })?
-      .command_options(&[
-        argument!(
-          StringBuilder,
-          "filters",
-          "Filter graph definition",
-          required(true),
-          description_localizations(&localizations! {
-            "ru" => "Описание графа фильтров"
-          })
-        )
-      ])?
-      .await?;
-
-    interactions
-      .create_guild_command(guild_id)
-      .chat_input("queue", "Show queue")?
-      .description_localizations(&localizations! {
-        "ru" => "Show queue)"
-      })?
-      .await?;
-
-    interactions
-      .create_guild_command(guild_id)
-      .chat_input("debug", "Show debug information")?
-      .description_localizations(&localizations! {
-        "ru" => "Show debug information)"
-      })?
-      .await?;
-
-    interactions
-      .create_guild_command(guild_id)
-      .chat_input("seek", "Seek")?
-      .description_localizations(&localizations! {
-        "ru" => "Hide and seek"
-      })?
-      .command_options(&[
-        argument!(
-          StringBuilder,
-          "position",
-          "Absolute or relative (++/-) position",
-          required(true)
-        )
-      ])?
-      .await?;
-
-    interactions
-      .create_guild_command(guild_id)
-      .chat_input("jump", "Jump to track")?
-      .description_localizations(&localizations! {
-        "ru" => "JMP ptr16:32"
-      })?
-      .command_options(&[
-        argument!(
-          StringBuilder,
-          "position",
-          "Absolute or relative (++/-) position in queue",
-          required(true)
-        )
-      ])?
-      .await?;
-
-    let intents = Intents::GUILDS | Intents::GUILD_VOICE_STATES;
-    let shard = Shard::new(ShardId::ONE, token, intents);
-
-    let sender = shard.sender();
-
-    (
-      shard,
-      Arc::new(StateRef {
-        sender,
-        http,
-        cache,
-        application_id,
-        players: Default::default(),
-        standby: Standby::new(),
+  let options = poise::FrameworkOptions {
+    commands: vec![commands::help(), commands::play()],
+    prefix_options: poise::PrefixFrameworkOptions {
+      prefix: Some("~".into()),
+      mention_as_prefix: true,
+      edit_tracker: Some(Arc::new(poise::EditTracker::for_timespan(Duration::from_secs(600)))),
+      ..Default::default()
+    },
+    // The global error handler for all error cases that may occur
+    on_error: |error| Box::pin(on_error(error)),
+    // This code is run before every command
+    pre_command: |ctx| {
+      Box::pin(async move {
+        info!("Executing command {}...", ctx.command().qualified_name);
       })
-    )
+    },
+    // This code is run after a command if it was successful (returned Ok)
+    post_command: |ctx| {
+      Box::pin(async move {
+        info!("Executed command {}!", ctx.command().qualified_name);
+      })
+    },
+    // Every command invocation must pass this check to continue execution
+    command_check: Some(|ctx| {
+      Box::pin(async move {
+        if ctx.author().id == 123456789 {
+          return Ok(false);
+        }
+        Ok(true)
+      })
+    }),
+    // Enforce command checks even for owners (enforced by default)
+    // Set to true to bypass checks, which is useful for testing
+    skip_checks_for_owners: false,
+    event_handler: |_ctx, event, _framework, _data| {
+      Box::pin(async move {
+        info!(
+          "Got an event in event handler: {:?}",
+          event.snake_case_name()
+        );
+        Ok(())
+      })
+    },
+    ..Default::default()
   };
 
-  let handlers: &mut HashMap<&'static str, Box<dyn CommandHandler>> = Box::leak(Box::new(HashMap::from([ // TODO(Assasans): Memory leak
-    ("play", Box::new(PlayCommand {}) as Box<dyn CommandHandler>),
-    ("pause", Box::new(PauseCommand {}) as Box<dyn CommandHandler>),
-    ("filters", Box::new(FiltersCommand {}) as Box<dyn CommandHandler>),
-    ("queue", Box::new(QueueCommand {}) as Box<dyn CommandHandler>),
-    ("debug", Box::new(DebugCommand {}) as Box<dyn CommandHandler>),
-    ("seek", Box::new(SeekCommand {}) as Box<dyn CommandHandler>),
-    ("jump", Box::new(JumpCommand {}) as Box<dyn CommandHandler>),
-  ])));
+  let framework = poise::Framework::builder()
+    .setup(move |ctx, _ready, framework| {
+      Box::pin(async move {
+        info!("Logged in as {}", _ready.user.name);
+        poise::builtins::register_in_guild(ctx, &framework.options().commands, GuildId::from(1171104054131314708)).await?;
 
-  while let Ok(event) = shard.next_event().await {
-    state.standby.process(&event);
-    state.cache.update(&event);
+        Ok(Arc::new(StateRef {
+          players: Default::default()
+        }))
+      })
+    })
+    .options(options)
+    .build();
 
-    if let Event::InteractionCreate(interaction) = event {
-      let command = try_unpack!(interaction.data.as_ref().context("no interaction data")?, InteractionData::ApplicationCommand)?;
-      let command_name = command.name.clone();
+  let voice_manager = Arc::new(MosaikVoiceManager::new());
+  VOICE_MANAGER.set(voice_manager.clone()).unwrap();
 
-      match handlers.get(command.name.as_str()) {
-        Some(handler) => {
-          let cloned = state.clone();
-          let state = state.clone();
-          tokio::spawn(async move {
-            let result = handler.run(cloned, interaction.as_ref()).await;
-            if let Err(error) = result {
-              tracing::debug!("handler error: {:?}", error);
+  let token = env::var("DISCORD_TOKEN").expect("token");
+  let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_VOICE_STATES
+    | GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+  let mut client = Client::builder(token, intents)
+    .voice_manager_arc(voice_manager)
+    .framework(framework).await
+    .expect("Error creating client");
 
-              let mut fmt = String::new();
-
-              let backtrace = error.backtrace().to_string();
-              let regex = Regex::new(r"(\d+): (.+)\n\s*at (.+)(?::(\d+):(\d+))+?").unwrap();
-
-              let mut skipped = 0;
-              for capture in regex.captures_iter(&backtrace) {
-                let index = capture.get(1).unwrap().as_str().parse::<i32>().unwrap();
-                let frame = capture.get(2).unwrap().as_str();
-                let file = capture.get(3).unwrap().as_str();
-                let line = capture.get(4).map(|it| it.as_str()).unwrap_or("?");
-                let column = capture.get(5).map(|it| it.as_str()).unwrap_or("?");
-
-                if index >= 13 {
-                  skipped += 1;
-                  continue;
-                }
-
-                let color = if !file.contains("/rustc/") && !file.contains("/.cargo/") {
-                  "33"
-                } else {
-                  "30"
-                };
-                fmt.write_fmt(format_args!("\u{001b}[2;34m{index:>2}: \u{001b}[2;{color}m{frame}\u{001b}[0m")).unwrap();
-                fmt.push_str("\n");
-                if !file.contains("/rustc/") && !file.contains("/.cargo/") {
-                  fmt.write_fmt(format_args!("    at \u{001b}[1;2m{file}\u{001b}[0m:{line}:{column}")).unwrap();
-                  fmt.push_str("\n");
-                }
-              }
-
-              if skipped > 0 {
-                fmt.write_fmt(format_args!("    \u{001b}[2;32m{skipped} more frames...\u{001b}[0m")).unwrap();
-              }
-
-              println!("{}", fmt);
-              let r = format!("Handler `{}` error: {}\n```ansi\n{}```", command_name, error, fmt);
-              println!("{} / {}", r.len(), r.chars().count());
-              state
-                .http
-                .interaction(state.application_id)
-                .update_response(&interaction.token)
-                .content(Some(&r)).unwrap()
-                .await.unwrap();
-            }
-          });
-        },
-        None => {
-          state
-            .http
-            .interaction(state.application_id)
-            .create_response(interaction.id, &interaction.token, &InteractionResponse {
-              kind: InteractionResponseType::ChannelMessageWithSource,
-              data: InteractionResponseDataBuilder::new()
-                .content(format!("Unknown handler for command `{}`", command.name.as_str()))
-                // .flags(MessageFlags::EPHEMERAL)
-                .build()
-                .into()
-            })
-            .await?;
-        }
-      }
-    }
+  if let Err(why) = client.start().await {
+    println!("An error occurred while running the client: {:?}", why);
   }
 
   Ok(())
 }
+
+pub static VOICE_MANAGER: OnceLock<Arc<MosaikVoiceManager>> = OnceLock::new();
