@@ -1,40 +1,24 @@
 use anyhow::Result;
-use async_trait::async_trait;
-use twilight_model::gateway::payload::incoming::InteractionCreate;
 
-use super::CommandHandler;
-use crate::{State, interaction_response, reply, update_reply};
+use crate::{AnyError, PoiseContext};
 
-pub struct PauseCommand;
+#[poise::command(prefix_command, track_edits, slash_command)]
+pub async fn pause(ctx: PoiseContext<'_>) -> Result<(), AnyError> {
+  ctx.reply("Processing...").await?;
 
-#[async_trait]
-impl CommandHandler for PauseCommand {
-  async fn run(&self, state: State, interaction: &InteractionCreate) -> Result<()> {
-    reply!(state, interaction, &interaction_response!(
-      DeferredChannelMessageWithSource,
-      content("Pausing...")
-    )).await?;
+  let guild_id = ctx.guild_id().unwrap();
 
-    // let command = try_unpack!(interaction.data.as_ref().context("no interaction data")?, InteractionData::ApplicationCommand)?;
-    let guild_id = interaction.guild_id.unwrap();
+  let state = ctx.data();
+  let players = state.players.read().await;
+  let player = if let Some(player) = players.get(&guild_id) {
+    player
+  } else {
+    ctx.reply("No player").await?;
+    return Ok(());
+  };
 
-    let players = state.players.read().await;
-    let player = players.get(&guild_id);
-    let player = if let Some(player) = player {
-      player
-    } else {
-      update_reply!(state, interaction)
-        .content(Some("No player"))?
-        .await?;
-      return Ok(());
-    };
+  player.connection.set_paused(!player.connection.is_paused());
+  ctx.reply("Ok").await?;
 
-    player.connection.set_paused(!player.connection.is_paused());
-
-    update_reply!(state, interaction)
-      .content(Some("Ok"))?
-      .await?;
-
-    Ok(())
-  }
+  Ok(())
 }

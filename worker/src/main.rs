@@ -148,7 +148,12 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
   info!("hello");
 
   let options = poise::FrameworkOptions {
-    commands: vec![commands::help(), commands::play(), commands::filters()],
+    commands: vec![
+      commands::help(),
+      commands::play(),
+      commands::filters(),
+      commands::pause(),
+    ],
     prefix_options: poise::PrefixFrameworkOptions {
       prefix: Some("~".into()),
       mention_as_prefix: true,

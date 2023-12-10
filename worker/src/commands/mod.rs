@@ -1,7 +1,9 @@
 mod filters;
+mod pause;
 mod play;
 
 pub use filters::*;
+pub use pause::*;
 pub use play::*;
 
 use crate::{AnyError, PoiseContext};
