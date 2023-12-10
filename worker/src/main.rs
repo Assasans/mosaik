@@ -4,7 +4,6 @@ pub mod providers;
 pub mod util;
 pub mod voice;
 
-use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 use std::fmt::Write;
@@ -12,11 +11,9 @@ use std::future::Future;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use player::Player;
 use regex::Regex;
 use serenity::all::GuildId;
 use serenity::prelude::*;
-use tokio::sync::RwLock;
 use tracing::{error, info};
 use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -24,11 +21,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::voice::MosaikVoiceManager;
 
-pub type State = Arc<StateRef>;
-
-pub struct StateRef {
-  players: RwLock<HashMap<GuildId, Arc<Player>>>
-}
+include_and_export!(state);
 
 fn spawn(fut: impl Future<Output = Result<(), Box<dyn Error + Send + Sync + 'static>>> + Send + 'static) {
   tokio::spawn(async move {
