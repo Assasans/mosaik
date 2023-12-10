@@ -1,75 +1,51 @@
-use anyhow::{Context, Result};
-use async_trait::async_trait;
+use anyhow::Result;
 use tracing::error;
-use twilight_model::application::interaction::application_command::CommandOptionValue;
-use twilight_model::application::interaction::InteractionData;
-use twilight_model::gateway::payload::incoming::InteractionCreate;
 
-use super::CommandHandler;
-use crate::{State, interaction_response, reply, update_reply, try_unpack, get_option_as};
 use crate::voice::ffmpeg::FFmpegSampleProviderHandle;
+use crate::{AnyError, PoiseContext};
 
-pub struct FiltersCommand;
+#[poise::command(prefix_command, track_edits, slash_command)]
+pub async fn filters(
+  ctx: PoiseContext<'_>,
+  #[description = "Specific command to show help about"]
+  #[autocomplete = "poise::builtins::autocomplete_command"]
+  filters: String
+) -> Result<(), AnyError> {
+  ctx.reply("Processing...").await?;
 
-#[async_trait]
-impl CommandHandler for FiltersCommand {
-  async fn run(&self, state: State, interaction: &InteractionCreate) -> Result<()> {
-    reply!(state, interaction, &interaction_response!(
-      DeferredChannelMessageWithSource,
-      content("Updating...")
-    )).await?;
+  let guild_id = ctx.guild_id().unwrap();
 
-    let command = try_unpack!(interaction.data.as_ref().context("no interaction data")?, InteractionData::ApplicationCommand)?;
-    let guild_id = interaction.guild_id.unwrap();
+  let state = ctx.data();
+  let players = state.players.read().await;
+  let player = if let Some(player) = players.get(&guild_id) {
+    player
+  } else {
+    ctx.reply("No player").await?;
+    return Ok(());
+  };
 
-    let filters = get_option_as!(command, "filters", CommandOptionValue::String)
-      .map(|it| it.unwrap().clone())
-      .context("no filters")?; // TODO(Assasans)
-
-    let players = state.players.read().await;
-    let player = players.get(&guild_id);
-    let player = if let Some(player) = player {
-      player
+  let handle = player.connection.sample_provider_handle.lock().await;
+  let handle = handle.as_ref().unwrap();
+  let handle = handle.as_any();
+  if let Some(handle) = handle.downcast_ref::<FFmpegSampleProviderHandle>() {
+    if filters == "bypass" {
+      handle.set_enable_filter_graph(false).unwrap();
+      ctx.reply("Disabled filter graph").await?;
     } else {
-      update_reply!(state, interaction)
-        .content(Some("No player"))?
-        .await?;
-      return Ok(());
-    };
-
-    let handle = player.connection.sample_provider_handle.lock().await;
-    let handle = handle.as_ref().unwrap();
-    let handle = handle.as_any();
-    if let Some(handle) = handle.downcast_ref::<FFmpegSampleProviderHandle>() {
-      if filters == "bypass" {
-        handle.set_enable_filter_graph(false).unwrap();
-
-        update_reply!(state, interaction)
-          .content(Some("Disabled filter graph"))?
-          .await?;
-      } else {
-        match handle.init_filters(&filters) {
-          Ok(()) => {
-            handle.set_enable_filter_graph(true).unwrap();
-            update_reply!(state, interaction)
-              .content(Some(&format!("Set filter graph: `{}`", filters)))?
-              .await?;
-          },
-          Err(error) => {
-            error!("failed to init filters: {:?}", error);
-
-            update_reply!(state, interaction)
-              .content(Some(&format!("Failed to set filter graph: `{:?}`", error)))?
-              .await?;
-          }
+      match handle.init_filters(&filters) {
+        Ok(()) => {
+          handle.set_enable_filter_graph(true).unwrap();
+          ctx.reply(format!("Set filter graph: `{}`", filters)).await?;
+        }
+        Err(error) => {
+          error!("failed to init filters: {:?}", error);
+          ctx.reply(format!("Failed to set filter graph: `{:?}`", error)).await?;
         }
       }
-    } else {
-      update_reply!(state, interaction)
-        .content(Some("Unsupported sample provider"))?
-        .await?;
     }
-
-    Ok(())
+  } else {
+    ctx.reply("Unsupported sample provider").await?;
   }
+
+  Ok(())
 }

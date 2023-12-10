@@ -1,5 +1,7 @@
+mod filters;
 mod play;
 
+pub use filters::*;
 pub use play::*;
 
 use crate::{AnyError, PoiseContext};
