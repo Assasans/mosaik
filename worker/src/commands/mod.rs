@@ -1,12 +1,6 @@
-mod filters;
-mod pause;
-mod play;
+use crate::{include_and_export, AnyError, PoiseContext};
 
-pub use filters::*;
-pub use pause::*;
-pub use play::*;
-
-use crate::{AnyError, PoiseContext};
+include_and_export!(play pause filters);
 
 /// Show this help menu
 #[poise::command(prefix_command, track_edits, slash_command)]

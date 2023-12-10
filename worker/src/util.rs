@@ -5,6 +5,16 @@ use thiserror::Error;
 pub struct MismatchError;
 
 #[macro_export]
+macro_rules! include_and_export {
+  ($($module:ident)+) => {
+    $(
+      mod $module;
+      pub use $module::*;
+    )*
+  };
+}
+
+#[macro_export]
 macro_rules! try_unpack {
   ($value:expr, $variant:path) => {{
     match $value {
