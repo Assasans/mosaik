@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+
 use serenity::all::GuildId;
 use tokio::sync::RwLock;
+
 use crate::player::Player;
 
 pub type State = Arc<StateRef>;

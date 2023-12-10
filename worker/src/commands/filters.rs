@@ -1,9 +1,9 @@
 use anyhow::Result;
 use tracing::error;
 
+use crate::state::get_player_or_fail;
 use crate::voice::ffmpeg::FFmpegSampleProviderHandle;
 use crate::{AnyError, PoiseContext};
-use crate::state::get_player_or_fail;
 
 #[poise::command(prefix_command, track_edits, slash_command)]
 pub async fn filters(

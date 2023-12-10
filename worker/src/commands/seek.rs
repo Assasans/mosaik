@@ -1,12 +1,11 @@
-
 use std::time::Duration;
-use anyhow::{Context, Result};
 
+use anyhow::{Context, Result};
 use tracing::debug;
 
-use crate::{PoiseContext, AnyError};
 use crate::state::get_player_or_fail;
 use crate::voice::ffmpeg::FFmpegSampleProviderHandle;
+use crate::{AnyError, PoiseContext};
 
 #[poise::command(prefix_command, track_edits, slash_command)]
 pub async fn seek(
@@ -35,7 +34,9 @@ pub async fn seek(
     handle.seek(position).unwrap();
     player.connection.sample_buffer.clear().await;
 
-    ctx.reply(format!("Seeked to {:?} (was: {:?})", position, current_position)).await?;
+    ctx
+      .reply(format!("Seeked to {:?} (was: {:?})", position, current_position))
+      .await?;
   } else {
     ctx.reply("Unsupported sample provider").await?;
   }

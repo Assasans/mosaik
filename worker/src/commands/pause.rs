@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use crate::{AnyError, PoiseContext};
 use crate::state::get_player_or_fail;
+use crate::{AnyError, PoiseContext};
 
 #[poise::command(prefix_command, track_edits, slash_command)]
 pub async fn pause(ctx: PoiseContext<'_>) -> Result<(), AnyError> {
