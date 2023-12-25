@@ -148,6 +148,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
       commands::pause(),
       commands::seek(),
       commands::queue(),
+      commands::debug(),
     ],
     prefix_options: poise::PrefixFrameworkOptions {
       prefix: Some("~".into()),
