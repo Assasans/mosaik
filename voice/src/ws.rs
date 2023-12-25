@@ -47,6 +47,7 @@ impl WebSocketVoiceConnection {
 
     // WebSocket IO task
     tokio::spawn(async move {
+      // [read_tx], [write_rx], [close_rx_tx], [close_tx_rx] are moved into this task
       loop {
         select! {
           message = socket.next() => {
@@ -60,7 +61,7 @@ impl WebSocketVoiceConnection {
                   }
 
                   Message::Close(frame) => {
-                    debug!("voice gateway closed with {:?}", frame);
+                    debug!(?frame, "voice gateway closed by remote");
                     close_rx_tx.send_async(frame).await.unwrap();
                   }
 
@@ -85,6 +86,7 @@ impl WebSocketVoiceConnection {
 
           frame = close_tx_rx.recv_async() => {
             let frame = frame.unwrap();
+            debug!(?frame, "voice gateway closed by local");
             socket.close(Some(frame)).await.unwrap();
           }
         }
@@ -238,5 +240,9 @@ impl WebSocketVoiceConnection {
   pub async fn close(&self, frame: CloseFrame<'_>) -> Result<()> {
     self.close_tx.send_async(frame.into_owned()).await?;
     Ok(())
+  }
+
+  pub fn is_closed(&self) -> bool {
+    self.read.is_disconnected()
   }
 }

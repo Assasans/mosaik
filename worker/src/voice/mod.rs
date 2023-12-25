@@ -53,6 +53,11 @@ impl MosaikVoiceManager {
       }
     }
   }
+
+  pub async fn invalidate_state(&self, guild_id: &GuildId) -> Option<MosaikVoiceState> {
+    let mut states = self.states.write().await;
+    states.remove(guild_id)
+  }
 }
 
 #[async_trait]

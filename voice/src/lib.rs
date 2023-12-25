@@ -206,11 +206,13 @@ impl VoiceConnection {
 
     let mut ws_lock = self.ws.write().await;
     if let Some(ref ws) = *ws_lock {
-      ws.close(CloseFrame {
-        code: CloseCode::Normal,
-        reason: "".into()
-      })
-      .await?;
+      if !ws.is_closed() {
+        ws.close(CloseFrame {
+          code: CloseCode::Normal,
+          reason: "".into()
+        })
+        .await?;
+      }
       *ws_lock = None;
     }
 
@@ -387,30 +389,35 @@ impl VoiceConnection {
           }
         }
 
-        frame = close.recv_async() => {
-          let frame = match frame {
-            Ok(frame) => frame,
-            Err(error) => {
-              debug!("websocket close channel error: {:?}", error);
-              break;
-            }
-          };
-
-          info!(?frame, "voice gateway closed");
-          if let Some(frame) = frame {
-            let code: GatewayCloseCode = frame.code.into();
-            if code.can_reconnect() {
-              me.reconnect_ws().await?;
-            }
-          }
-        }
-
         _ = async { interval.as_mut().unwrap().tick().await }, if interval.is_some() => {
           let ws = me.ws.read().await;
           let ws = ws.as_ref().context("no voice gateway connection")?;
 
-          ws.send_heartbeat().await?;
+          match ws.send_heartbeat().await {
+            Ok(_) => {},
+            Err(error) => {
+              debug!("websocket send heartbeat error: {:?}", error);
+              break;
+            }
+          }
         }
+      }
+    }
+
+    debug!("waiting for voice gateway closed event...");
+    let frame = close.recv_async().await?;
+    info!(?frame, "voice gateway closed");
+    if let Some(frame) = frame {
+      if let Some(me) = me.upgrade() {
+        let code: GatewayCloseCode = frame.code.into();
+        if code.can_reconnect() {
+          me.reconnect_ws().await?;
+        } else {
+          debug!(?frame, "invalidating voice gateway connection");
+          me.disconnect().await?;
+        }
+      } else {
+        warn!("failed to upgrade weak me");
       }
     }
 
@@ -445,6 +452,8 @@ impl VoiceConnection {
       ws.ready.clone().context("no voice ready packet")?
     };
 
+    // TODO(Assasans): Seems like a hack...
+    let (_udp_drop_tx, udp_drop_rx) = flume::bounded::<()>(0);
     tokio::task::spawn(async move {
       loop {
         let mut sample_provider = clone.sample_provider.lock().await;
@@ -452,7 +461,16 @@ impl VoiceConnection {
         match sample_provider.get_samples() {
           Some(data) => {
             // debug!("got {} samples", data.len());
-            clone.sample_buffer.write(&data).await.unwrap();
+            select! {
+              result = clone.sample_buffer.write(&data) => {
+                result.unwrap();
+              }
+
+              _ = udp_drop_rx.recv_async() => {
+                debug!("UDP loop exited, aborting IO task");
+                break;
+              }
+            }
           }
           None => {
             debug!("got sample provider eof");
@@ -481,7 +499,17 @@ impl VoiceConnection {
       }
 
       let mut udp_lock = me.udp.lock().await;
-      let udp = udp_lock.as_mut().context("no voice UDP socket")?;
+      let udp = match udp_lock.as_mut() {
+        Some(udp) => udp,
+        None => {
+          warn!("no voice UDP socket, possibly voice gateway was closed by remote");
+          me.sample_buffer.clear().await;
+          me.state.set(VoiceConnectionState::Disconnected);
+
+          // Early return instead of break to prevent flushing to nonexistent connection
+          return Ok(());
+        }
+      };
 
       if me.paused.get() && me.silence_frames_left.load(Ordering::Relaxed) > 0 {
         me.silence_frames_left.fetch_sub(1, Ordering::SeqCst);
@@ -536,6 +564,7 @@ impl VoiceConnection {
     }
 
     debug!("play loop finished");
+    me.sample_buffer.clear().await;
     me.state.set(VoiceConnectionState::Connected);
     Ok(())
   }
