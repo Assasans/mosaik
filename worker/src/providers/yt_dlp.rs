@@ -1,6 +1,7 @@
 use std::borrow::ToOwned;
 use std::cmp::Ordering;
 use std::process::Stdio;
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -104,6 +105,7 @@ impl MediaProvider for YtDlpMediaProvider {
       Id => { data["id"].as_str() },
       Title => { data["title"].as_str() },
       Url => { data["original_url"].as_str() },
+      Duration => { data["duration"].as_u64().map(|it| Duration::from_secs(it)) },
     })
   }
 }
