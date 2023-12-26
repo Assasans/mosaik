@@ -1,4 +1,4 @@
-use std::ffi::CString;
+use std::ffi::{c_int, c_void, CString};
 use std::slice;
 
 mod ffi {
@@ -59,14 +59,19 @@ impl Decoder {
   }
 
   pub fn read_frame(&mut self, is_flush: bool) -> Option<Vec<f32>> {
-    let mut data_ptr = std::ptr::null_mut();
-    let mut data_length = 0;
-    let result = unsafe {
-      if is_flush {
-        ffi::decoder_flush_frame(self.decoder, &mut data_ptr, &mut data_length)
-      } else {
-        ffi::decoder_read_frame(self.decoder, &mut data_ptr, &mut data_length)
-      }
+    let mut buffer = Vec::with_capacity(512);
+
+    extern "C" fn frame_callback(data: *mut f32, data_length: c_int, user: *mut c_void) {
+      let buffer = unsafe { &mut *(user as *mut Vec<f32>) };
+      let data_slice = unsafe { slice::from_raw_parts(data, data_length as usize) };
+      buffer.extend_from_slice(data_slice);
+    }
+
+    let user = &mut buffer as *mut Vec<f32> as *mut c_void;
+    let result = if is_flush {
+      unsafe { ffi::decoder_flush_frame(self.decoder, Some(frame_callback), user) }
+    } else {
+      unsafe { ffi::decoder_read_frame(self.decoder, Some(frame_callback), user) }
     };
 
     // AVERROR(EAGAIN)
@@ -74,10 +79,7 @@ impl Decoder {
       return None;
     }
 
-    let data_slice = unsafe { slice::from_raw_parts(data_ptr, data_length as usize) };
-    let data = data_slice.to_vec();
-    self.unref_frame().unwrap();
-    Some(data)
+    Some(buffer)
   }
 
   pub fn unref_frame(&self) -> Result<(), RawError> {

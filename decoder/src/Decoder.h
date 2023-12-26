@@ -283,7 +283,7 @@ public:
 
   Decoder(const Decoder &other) = delete;
 
-  int read_frame(float *&data, int &data_length) {
+  int read_frame(void (*frame_callback)(float *data, int data_length, void* user), void* user) {
     int ret;
     if((ret = av_read_frame(fmt_ctx.get(), packet.get())) < 0) {
       av_log(nullptr, AV_LOG_ERROR, "Error while av_read_frame\n");
@@ -367,10 +367,13 @@ public:
 
           // This does the same thing as swr_convert_frame, but without the stupid config_changed call,
           // which returns an AVERROR_INPUT_CHANGED even if it is not a case.
-          out_frame->nb_samples = swr_get_delay(swr.get(), out_frame->sample_rate)
-                                  + process_frame->nb_samples * (int64_t)out_frame->sample_rate /
-                                    process_frame->sample_rate
-                                  + 3;
+          int out_num_samples = 48000;
+          // av_rescale_rnd(swr_get_delay(swr.get(), process_frame->sample_rate) + process_frame->nb_samples, out_frame->sample_rate, process_frame->sample_rate, AV_ROUND_UP);
+          // av_log(nullptr, AV_LOG_ERROR, "out=%d in=%d = %d\n", out_frame->sample_rate, process_frame->sample_rate, out_num_samples);
+          out_frame->nb_samples = out_num_samples;
+          // out_frame->nb_samples = swr_get_delay(swr.get(), out_frame->sample_rate)
+          //                         + process_frame->nb_samples * (int64_t)out_frame->sample_rate / process_frame->sample_rate
+          //                         + 3;
           if((ret = av_frame_get_buffer(out_frame.get(), 0)) < 0) {
             av_log(nullptr, AV_LOG_ERROR, "Error while av_frame_get_buffer\n");
             goto end;
@@ -386,11 +389,11 @@ public:
           // printf("increment pts by %d -> %ld\n", out_frame->nb_samples, pts);
 
           const int n = out_frame->nb_samples * out_frame->ch_layout.nb_channels;
-          data = reinterpret_cast<float *>(out_frame->data[0]);
-          data_length = n;
+          auto data = reinterpret_cast<float *>(out_frame->extended_data[0]);
+          frame_callback(data, n, user);
 
           // print_frame(out_frame.get());
-          // av_frame_unref(out_frame.get());
+          av_frame_unref(out_frame.get());
           av_frame_unref(process_frame);
 
           if(!enable_filter_graph) {
@@ -412,7 +415,8 @@ public:
     return ret;
   }
 
-  int flush_frame(float *&data, int &data_length) {
+  // TODO(Assasans): Some filters like "dynaudnorm" buffer data in filtergraph, we need to implement flushing from it.
+  int flush_frame(void (*frame_callback)(float *data, int data_length, void* user), void* user) {
     int ret;
 
     out_frame->format = AV_SAMPLE_FMT_FLT;
@@ -421,10 +425,17 @@ public:
 
     // This does the same thing as swr_convert_frame, but without the stupid config_changed call,
     // which returns an AVERROR_INPUT_CHANGED even if it is not a case.
+    out_frame->nb_samples = 48000;
+    if((ret = av_frame_get_buffer(out_frame.get(), 0)) < 0) {
+      av_log(nullptr, AV_LOG_ERROR, "Error while av_frame_get_buffer\n");
+      goto end;
+    }
+
     if((ret = swr_convert(swr.get(), out_frame->extended_data, out_frame->nb_samples, nullptr, 0)) < 0) {
       av_log(nullptr, AV_LOG_ERROR, "Error while swr_convert (flush)\n");
       goto end;
     }
+    out_frame->nb_samples = ret;
 
     pts += out_frame->nb_samples;
 
@@ -434,11 +445,11 @@ public:
         return AVERROR_EOF;
       }
 
-      data = reinterpret_cast<float *>(out_frame->data[0]);
-      data_length = n;
+      auto data = reinterpret_cast<float *>(out_frame->extended_data[0]);
+      frame_callback(data, n, user);
 
       // print_frame(out_frame.get());
-      // av_frame_unref(out_frame.get());
+      av_frame_unref(out_frame.get());
     }
 
     end:
@@ -532,12 +543,12 @@ DLL_EXPORT int decoder_init_filters(Decoder *decoder, const char *filters_descr)
   return decoder->init_filters(filters_descr);
 }
 
-DLL_EXPORT int decoder_read_frame(Decoder *decoder, float *&data, int &data_length) {
-  return decoder->read_frame(data, data_length);
+DLL_EXPORT int decoder_read_frame(Decoder *decoder, void (*frame_callback)(float *data, int data_length, void* user), void* user) {
+  return decoder->read_frame(frame_callback, user);
 }
 
-DLL_EXPORT int decoder_flush_frame(Decoder *decoder, float *&data, int &data_length) {
-  return decoder->flush_frame(data, data_length);
+DLL_EXPORT int decoder_flush_frame(Decoder *decoder, void (*frame_callback)(float *data, int data_length, void* user), void* user) {
+  return decoder->flush_frame(frame_callback, user);
 }
 
 DLL_EXPORT int decoder_unref_frame(Decoder *decoder) {
