@@ -1,4 +1,5 @@
 use anyhow::Result;
+use decoder::Decoder;
 use tracing::error;
 
 use crate::state::get_player_or_fail;
@@ -30,8 +31,11 @@ pub async fn filters(
           ctx.reply(format!("Set filter graph: `{}`", filters)).await?;
         }
         Err(error) => {
-          error!("failed to init filters: {:?}", error);
-          ctx.reply(format!("Failed to set filter graph: `{:?}`", error)).await?;
+          let description = Decoder::error_code_to_string(error);
+          error!("failed to init filters: {:?} ({})", error, description);
+          ctx
+            .reply(format!("Failed to set filter graph: `{:?} ({})`", error, description))
+            .await?;
         }
       }
     }

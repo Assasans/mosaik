@@ -571,4 +571,10 @@ DLL_EXPORT int decoder_set_enable_filter_graph(Decoder *decoder, bool enable) {
   return decoder->set_enable_filter_graph(enable);
 }
 
+DLL_EXPORT int decoder_util_error_to_string(int error_code, char* buffer, int buffer_length) {
+  return av_strerror(error_code, buffer, buffer_length);
+}
+
+DLL_EXPORT const int ERROR_MAX_STRING_SIZE = AV_ERROR_MAX_STRING_SIZE;
+
 #endif

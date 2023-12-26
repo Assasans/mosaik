@@ -1,4 +1,4 @@
-use std::ffi::{c_int, c_void, CString};
+use std::ffi::{c_int, c_void, CStr, CString};
 use std::slice;
 
 mod ffi {
@@ -96,6 +96,14 @@ impl Decoder {
 
   pub fn seek(&mut self, pts: u64) -> Result<(), RawError> {
     result_zero!(unsafe { ffi::decoder_seek(self.decoder, pts) })
+  }
+
+  pub fn error_code_to_string(error: RawError) -> String {
+    let mut chars = [0; ffi::ERROR_MAX_STRING_SIZE as usize];
+    unsafe {
+      ffi::decoder_util_error_to_string(error, chars.as_mut_ptr(), chars.len() as i32);
+      CStr::from_ptr(chars.as_ptr()).to_str().unwrap().to_owned()
+    }
   }
 }
 
