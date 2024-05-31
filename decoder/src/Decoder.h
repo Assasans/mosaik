@@ -221,7 +221,7 @@ public:
 
     AVFormatContext *fmt_ctx_raw = nullptr;
     if((ret = avformat_open_input(&fmt_ctx_raw, path, nullptr, nullptr)) < 0) {
-      av_log(nullptr, AV_LOG_ERROR, "Cannot open input file\n");
+      av_log(nullptr, AV_LOG_ERROR, "Cannot open input file: %s\n", av_err2str(ret));
       return ret;
     }
     fmt_ctx = std::unique_ptr<AVFormatContext, AVFormatContextDeleter>(fmt_ctx_raw);

@@ -11,6 +11,8 @@ add_executable(${PROJECT_NAME}-test src/main.cpp)
 set(FFMPEG_MINIMUM_VERSION 6.0)
 
 find_package(PkgConfig REQUIRED)
+
+set(CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/ffmpeg/bin")
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libavfilter libswresample)
 
 if(PKG_CONFIG_FOUND)
