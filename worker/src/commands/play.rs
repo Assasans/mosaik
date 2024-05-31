@@ -62,7 +62,7 @@ pub async fn play(
     ws.as_ref().unwrap().send_speaking(true).await?;
   }
 
-  let (provider, input) = source.split_once(':').context("invalid source")?;
+  let (provider, input) = source.split_once(':').context("no media provider passed")?;
   let mut provider: Box<dyn MediaProvider> = match provider {
     "ffmpeg" => Box::new(FFmpegMediaProvider::new(input.to_owned())),
     "yt-dlp" => Box::new(YtDlpMediaProvider::new(input.to_owned())),

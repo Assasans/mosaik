@@ -37,6 +37,12 @@ impl MediaProvider for YtDlpMediaProvider {
       .spawn()?
       .wait_with_output()
       .await?;
+    if !output.status.success() {
+      let stderr = String::from_utf8_lossy(&output.stderr);
+      debug!("yt-dlp media provider error: {:?}", stderr);
+      return Err(anyhow!("yt-dlp exit code {:?}: {}", output.status.code(), stderr));
+    }
+
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let data = self.data.insert(serde_json::from_str::<Value>(&stdout)?.into());
