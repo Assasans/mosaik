@@ -187,7 +187,7 @@ impl Player {
     let sample_provider = track.provider.get_sample_provider().await?;
     debug!("initializing sample provider (deadlock test)");
     *self.connection.sample_provider_handle.lock().await = Some(sample_provider.get_handle());
-    *self.connection.sample_provider.lock().await = Some(sample_provider);
+    *self.connection.sample_provider.lock().unwrap() = Some(sample_provider);
     debug!("sample provider initialized (deadlock test)");
 
     let x = self.clone();

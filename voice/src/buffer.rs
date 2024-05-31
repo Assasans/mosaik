@@ -73,7 +73,7 @@ impl<T: Copy> SampleBuffer<T> {
       let end = min(written + producer.free_len(), data.len());
       producer.push_slice(&data[written..end]);
       let len = producer.len();
-      self.length.store(len, Ordering::Relaxed);
+      self.length.store(len, Ordering::Release);
       self.write_performed.0.send(())?;
       trace!("written {written}..{end} ({}) samples", end - written);
       written = end;
@@ -99,7 +99,7 @@ impl<T: Copy> SampleBuffer<T> {
     let mut consumer = self.consumer.lock().await;
     assert!(consumer.len() >= data.len());
     consumer.pop_slice(data);
-    self.length.fetch_sub(data.len(), Ordering::Relaxed);
+    self.length.fetch_sub(data.len(), Ordering::AcqRel);
 
     if consumer.len() <= self.low_threshold && self.is_corked.get() {
       self.is_corked.set(false);
@@ -113,7 +113,7 @@ impl<T: Copy> SampleBuffer<T> {
     let mut consumer = self.consumer.lock().await;
 
     let data = consumer.pop_iter().collect::<Vec<T>>();
-    self.length.store(0, Ordering::Relaxed);
+    self.length.store(0, Ordering::Release);
     self.is_corked.set(false);
     debug!("flush: buffer uncorked: {} <= {}", consumer.len(), self.low_threshold);
 
@@ -124,7 +124,7 @@ impl<T: Copy> SampleBuffer<T> {
     let mut consumer = self.consumer.lock().await;
     consumer.clear();
 
-    self.length.store(0, Ordering::Relaxed);
+    self.length.store(0, Ordering::Release);
     self.is_corked.set(false);
     debug!("clear: buffer uncorked: {} <= {}", consumer.len(), self.low_threshold);
   }

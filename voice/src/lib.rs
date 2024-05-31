@@ -109,7 +109,7 @@ pub struct VoiceConnection {
   cipher: Mutex<Option<XSalsa20Poly1305>>,
   cipher_mode: VoiceCipherMode,
   opus_encoder: Mutex<Encoder>,
-  pub sample_provider: Mutex<Option<Box<dyn SampleProvider>>>,
+  pub sample_provider: std::sync::Mutex<Option<Box<dyn SampleProvider>>>,
   pub sample_provider_handle: Mutex<Option<Box<dyn SampleProviderHandle>>>,
   pub state: StateFlow<VoiceConnectionState>,
   paused: StateFlow<bool>,
@@ -127,7 +127,7 @@ impl VoiceConnection {
       cipher: Mutex::new(None),
       cipher_mode: VoiceCipherMode::Suffix,
       opus_encoder: Mutex::new(Encoder::new(48000, Channels::Stereo, Application::Audio)?),
-      sample_provider: Mutex::new(None),
+      sample_provider: std::sync::Mutex::new(None),
       sample_provider_handle: Mutex::new(None),
       state: StateFlow::new(VoiceConnectionState::Disconnected),
       paused: StateFlow::new(false),
@@ -456,9 +456,14 @@ impl VoiceConnection {
     let (_udp_drop_tx, udp_drop_rx) = flume::bounded::<()>(0);
     tokio::task::spawn(async move {
       loop {
-        let mut sample_provider = clone.sample_provider.lock().await;
-        let sample_provider = sample_provider.as_mut().context("no sample provider set").unwrap();
-        match sample_provider.get_samples() {
+        let clone2 = clone.clone();
+        let samples = tokio::task::spawn_blocking(move || {
+          let mut sample_provider = clone2.sample_provider.lock().unwrap();
+          let sample_provider = sample_provider.as_mut().context("no sample provider set").unwrap();
+          sample_provider.get_samples()
+        }).await.unwrap();
+
+        match samples {
           Some(data) => {
             // debug!("got {} samples", data.len());
             select! {
