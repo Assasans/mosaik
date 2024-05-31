@@ -19,6 +19,8 @@ pub async fn play(
   #[autocomplete = "poise::builtins::autocomplete_command"]
   source: String
 ) -> Result<(), AnyError> {
+  ctx.reply("Processing...").await?;
+
   let author = ctx.author();
   let guild_id = ctx.guild_id().unwrap();
 
