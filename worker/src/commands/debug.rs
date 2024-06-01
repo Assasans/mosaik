@@ -23,24 +23,26 @@ pub async fn debug(ctx: PoiseContext<'_>) -> Result<(), AnyError> {
     false
   );
 
-  let handle = player.connection.sample_provider_handle.lock().await;
-  let handle = handle.as_ref().unwrap();
-  let handle = handle.as_any();
-  if let Some(handle) = handle.downcast_ref::<FFmpegSampleProviderHandle>() {
-    // TODO(Assasans): Make get_frame_pts return raw PTS (samples count)?
-    let decoder_pts = handle.get_frame_pts().unwrap();
-    let buffer_length = player.connection.sample_buffer.len() * 1000 / 2 / 48000;
-    let buffer_length = Duration::from_millis(buffer_length as u64);
-    let pts = decoder_pts - buffer_length;
+  {
+    let handle = player.connection.sample_provider_handle.lock().await;
+    let handle = handle.as_ref().unwrap();
+    let handle = handle.as_any();
+    if let Some(handle) = handle.downcast_ref::<FFmpegSampleProviderHandle>() {
+      // TODO(Assasans): Make get_frame_pts return raw PTS (samples count)?
+      let decoder_pts = handle.get_frame_pts().unwrap();
+      let buffer_length = player.connection.sample_buffer.len() * 1000 / 2 / 48000;
+      let buffer_length = Duration::from_millis(buffer_length as u64);
+      let pts = decoder_pts - buffer_length;
 
-    embed = embed.field(
-      "Decoder",
-      format!(
-        "pts: `{:?}` (decoder: `{:?}`, buffered: `{:?}`)",
-        pts, decoder_pts, buffer_length
-      ),
-      false
-    );
+      embed = embed.field(
+        "Decoder",
+        format!(
+          "pts: `{:?}` (decoder: `{:?}`, buffered: `{:?}`)",
+          pts, decoder_pts, buffer_length
+        ),
+        false
+      );
+    }
   }
 
   embed = embed.field(
@@ -53,24 +55,28 @@ pub async fn debug(ctx: PoiseContext<'_>) -> Result<(), AnyError> {
     false
   );
 
-  let ws = player.connection.ws.read().await;
-  if let Some(ws) = ws.as_ref() {
-    if let Some(ready) = &ws.ready {
-      embed = embed.field(
-        "WebSocketVoiceConnection",
-        format!("ssrc: `{}`\nendpoint: `{}:{}`", ready.ssrc, ready.ip, ready.port),
-        true
-      );
+  {
+    let ws = player.connection.ws.read().await;
+    if let Some(ws) = ws.as_ref() {
+      if let Some(ready) = &ws.ready {
+        embed = embed.field(
+          "WebSocketVoiceConnection",
+          format!("ssrc: `{}`\nendpoint: `{}:{}`", ready.ssrc, ready.ip, ready.port),
+          true
+        );
+      }
     }
   }
 
-  let udp = player.connection.udp.lock().await;
-  if let Some(udp) = udp.as_ref() {
-    embed = embed.field(
-      "UdpVoiceConnection",
-      format!("sequence: `{}`\ntimestamp: `{}`", udp.sequence.0 .0, udp.timestamp.0 .0),
-      true
-    );
+  {
+    let udp = player.connection.udp.lock().await;
+    if let Some(udp) = udp.as_ref() {
+      embed = embed.field(
+        "UdpVoiceConnection",
+        format!("sequence: `{}`\ntimestamp: `{}`", udp.sequence.0 .0, udp.timestamp.0 .0),
+        true
+      );
+    }
   }
 
   ctx.send(ctx.reply_builder(CreateReply::default().embed(embed))).await?;
