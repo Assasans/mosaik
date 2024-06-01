@@ -30,7 +30,7 @@ impl YtDlpMediaProvider {
 impl MediaProvider for YtDlpMediaProvider {
   async fn init(&mut self) -> Result<()> {
     let output = Command::new("yt-dlp")
-      .args(&["--no-download", "--print-json", &self.query])
+      .args(&["--no-download", "--print-json", "--no-playlist", &self.query])
       .stdout(Stdio::piped())
       .stderr(Stdio::piped())
       .stdin(Stdio::piped())
