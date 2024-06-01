@@ -84,6 +84,7 @@ pub struct VoiceConnectionOptions {
   pub session_id: String
 }
 
+#[derive(Debug)]
 struct IpDiscoveryResult {
   pub address: IpAddr,
   pub port: u16
@@ -145,9 +146,12 @@ impl VoiceConnection {
         .await
         .set_bitrate(Bitrate::Bits(i32::try_from(bitrate)?))?;
     }
+    debug!("using bitrate {:?}", self.opus_encoder.lock().await.get_bitrate());
+
     // self.opus_encoder.lock().await.set_inband_fec(true)?;
     // self.opus_encoder.lock().await.set_packet_loss_perc(50)?;
 
+    debug!("connecting to gateway {}", options.endpoint);
     *self.ws.write().await = Some(WebSocketVoiceConnection::new(VoiceConnectionMode::New(options.clone())).await?);
 
     let ws = self.ws.read().await;
@@ -159,9 +163,11 @@ impl VoiceConnection {
     *self.ws_heartbeat_interval.lock().await =
       Some(interval(Duration::from_millis(hello.heartbeat_interval.round() as u64)));
 
+    debug!("connecting to udp {}", options.endpoint);
     *self.udp.lock().await = Some(UdpVoiceConnection::new(ready).await?);
 
     let ip = self.discover_udp_ip(ready).await?;
+    debug!("public ip: {:?}", ip);
 
     ws.send(
       GatewayEvent::SelectProtocol(SelectProtocol {
@@ -426,7 +432,7 @@ impl VoiceConnection {
 
   pub async fn reconnect_ws(&self) -> Result<()> {
     let mut ws = self.ws.write().await;
-    let old_ws = ws.take().context("no voice gateway connection")?;
+    let old_ws = ws.take().expect("no voice gateway connection");
 
     debug!("reconnecting to voice gateway...");
     *ws = Some(
