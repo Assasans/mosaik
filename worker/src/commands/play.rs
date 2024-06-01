@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use serenity::all::ShardId;
-use tracing::info;
+use tracing::{error, info};
 use voice::VoiceConnectionState;
 
 use crate::player::track::Track;
@@ -10,7 +10,8 @@ use crate::player::Player;
 use crate::providers::{
   FFmpegMediaProvider, MediaProvider, SberzvukMediaProvider, VkMediaProvider, YtDlpMediaProvider
 };
-use crate::{AnyError, PoiseContext, VOICE_MANAGER};
+use crate::{AnyError, PoiseContext, pretty_print_error, VOICE_MANAGER};
+use crate::providers::factory::{MediaProviderFactory, YtDlpPlaylistMediaProviderFactory};
 
 #[poise::command(prefix_command, track_edits, slash_command)]
 pub async fn play(
@@ -63,39 +64,62 @@ pub async fn play(
   }
 
   let (provider, input) = source.split_once(':').context("no media provider passed")?;
-  let mut provider: Box<dyn MediaProvider> = match provider {
-    "ffmpeg" => Box::new(FFmpegMediaProvider::new(input.to_owned())),
-    "yt-dlp" => Box::new(YtDlpMediaProvider::new(input.to_owned())),
-    "zvuk" => Box::new(SberzvukMediaProvider::new(input.parse::<i64>()?)),
+  let mut providers: Vec<Box<dyn MediaProvider>> = match provider {
+    "ffmpeg" => vec![Box::new(FFmpegMediaProvider::new(input.to_owned()))],
+    "yt-dlp" => vec![Box::new(YtDlpMediaProvider::new(input.to_owned()))],
+    "yt-dlp-playlist" => {
+      let mut factory = YtDlpPlaylistMediaProviderFactory::new(input.to_owned());
+      factory.init().await.unwrap();
+      factory.get_media_providers().await.unwrap()
+    },
+    "zvuk" => vec![Box::new(SberzvukMediaProvider::new(input.parse::<i64>()?))],
     "vk" => {
       let (owner_id, track_id) = input.split_once('_').unwrap();
-      Box::new(VkMediaProvider::new(owner_id.parse::<i64>()?, track_id.parse::<i64>()?))
+      vec![Box::new(VkMediaProvider::new(owner_id.parse::<i64>()?, track_id.parse::<i64>()?))]
     }
     _ => todo!("media provider {} is not implemented", provider)
   };
-  provider.init().await?;
 
-  let track = Track::new(provider, Some(author.id));
-  let (track, position) = player.queue.push(track);
+  for mut provider in providers {
+    match provider.init().await {
+      Ok(_) => {
+        let track = Track::new(provider, Some(author.id));
+        let (track, position) = player.queue.push(track);
 
-  if player.connection.state.get() != VoiceConnectionState::Playing {
-    player.queue.set_position(position);
-    player.play().await.unwrap();
+        if player.connection.state.get() != VoiceConnectionState::Playing {
+          player.queue.set_position(position);
+          player.play().await.unwrap();
+        }
+
+        let metadata = track.provider.get_metadata().await?;
+        let metadata_string = metadata
+          .iter()
+          .map(|it| format!("`{:?}`", it))
+          .collect::<Vec<String>>()
+          .join("\n");
+
+        ctx
+          .reply(format!(
+            "Added track `{:?}` to queue\n{}",
+            track.provider, metadata_string
+          ))
+          .await
+          .unwrap();
+      }
+      Err(error) => {
+        error!("failed to init track: {:?}", error);
+
+        ctx
+          .reply(format!(
+            "Failed to init provider `{:?}`:```ansi\n{}\n```",
+            provider,
+            pretty_print_error(error)
+          ))
+          .await
+          .unwrap();
+      }
+    }
   }
 
-  let metadata = track.provider.get_metadata().await?;
-  let metadata_string = metadata
-    .iter()
-    .map(|it| format!("`{:?}`", it))
-    .collect::<Vec<String>>()
-    .join("\n");
-
-  ctx
-    .reply(format!(
-      "Added track `{:?}` to queue\n{}",
-      track.provider, metadata_string
-    ))
-    .await
-    .unwrap();
   Ok(())
 }

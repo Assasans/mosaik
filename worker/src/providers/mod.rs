@@ -3,6 +3,7 @@ mod metadata;
 mod sberzvuk;
 mod vk;
 mod yt_dlp;
+pub mod factory;
 
 use std::fmt::Debug;
 
