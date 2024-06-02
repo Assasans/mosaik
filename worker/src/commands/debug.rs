@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -50,6 +51,15 @@ pub async fn debug(ctx: PoiseContext<'_>) -> Result<(), AnyError> {
 
   {
     let rms = player.connection.rms.lock().unwrap();
+    let ebur128 = player.connection.ebur128.lock().unwrap();
+
+    fn wrap_warning(value: impl Display, is_warning: bool) -> String {
+      if is_warning {
+        format!("__{}__ :warning:", value)
+      } else {
+        format!("{}", value)
+      }
+    }
 
     let get_rms = |ms| {
       let rms = rms.calculate_rms(SAMPLE_RATE * CHANNEL_COUNT * ms / 1000);
@@ -63,12 +73,29 @@ pub async fn debug(ctx: PoiseContext<'_>) -> Result<(), AnyError> {
       (5000, get_rms(5000))
     ];
     let rms = rms.iter().map(|(window, (rms, rms_db))| {
-      format!("RMS over {} ms: `{} dBV, {} Vrms`", window, rms_db, rms)
+      format!(
+        "RMS over {} ms: {}",
+        window,
+        wrap_warning(format!("`{:.2} dBV, {:.4} Vrms`", rms_db, rms), *rms_db >= 0.0)
+      )
     }).collect::<Vec<_>>().join("\n");
+
+    let true_peak = 20.0 * ebur128.prev_true_peak(0).unwrap().log10();
+    let lufs_m = ebur128.loudness_momentary().unwrap();
+    let lufs_s = ebur128.loudness_shortterm().unwrap();
+    let lufs_i = ebur128.loudness_global().unwrap();
+    let lufs_target = -10.0;
 
     embed = embed.field(
       "Audio levels",
-      format!("{}", rms),
+      format!(
+        "{}\nCurrent: {}\nMomentary loudness: {}\nShort-term loudness: {}\nIntegrated loudness: {}",
+        rms,
+        wrap_warning(format!("`{:.2} dBTP`", true_peak), true_peak >= 0.0),
+        wrap_warning(format!("`{:.1} LUFS`", lufs_m), lufs_m > lufs_target),
+        wrap_warning(format!("`{:.1} LUFS`", lufs_s), lufs_s > lufs_target),
+        wrap_warning(format!("`{:.1} LUFS`", lufs_i), lufs_i > lufs_target),
+      ),
       true
     );
   }

@@ -21,6 +21,7 @@ use discortp::discord::{IpDiscoveryPacket, IpDiscoveryType, MutableIpDiscoveryPa
 use discortp::rtcp::report::{MutableReceiverReportPacket, ReportBlockPacket};
 use discortp::rtp::{MutableRtpPacket, RtpType};
 use discortp::MutablePacket;
+use ebur128::{EbuR128, Mode};
 use flume::{Receiver, Sender};
 pub use event::*;
 pub use opcode::*;
@@ -125,6 +126,7 @@ pub struct VoiceConnection {
   silence_frames_left: AtomicU8,
   pub sample_buffer: SampleBuffer<f32>,
   pub rms: std::sync::Mutex<RMS<f32>>,
+  pub ebur128: std::sync::Mutex<EbuR128>,
   pub stop_udp_loop: AtomicBool,
   events_tx: Sender<VoiceConnectionEvent>,
   pub events: Receiver<VoiceConnectionEvent>,
@@ -148,6 +150,7 @@ impl VoiceConnection {
       silence_frames_left: AtomicU8::new(0),
       sample_buffer: SampleBuffer::new(SAMPLE_RATE * 3, SAMPLE_RATE, SAMPLE_RATE * 2),
       rms: std::sync::Mutex::new(RMS::new(((SAMPLE_RATE * CHANNEL_COUNT) as f32 * 5.0) as usize)),
+      ebur128: std::sync::Mutex::new(EbuR128::new(CHANNEL_COUNT as u32, SAMPLE_RATE as u32, Mode::M | Mode::S | Mode::I | Mode::TRUE_PEAK).unwrap()),
       stop_udp_loop: AtomicBool::new(false),
       events_tx,
       events: events_rx
@@ -571,6 +574,11 @@ impl VoiceConnection {
           for sample in &data {
             rms.add_sample(*sample);
           }
+        }
+
+        {
+          let mut ebur128 = me.ebur128.lock().unwrap();
+          ebur128.add_frames_f32(&data).unwrap();
         }
 
         me.send_voice_packet(&ready, udp, AudioFrame::Pcm(data)).await?;
