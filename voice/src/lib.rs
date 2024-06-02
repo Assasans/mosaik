@@ -6,6 +6,7 @@ pub mod opcode;
 pub mod provider;
 pub mod udp;
 pub mod ws;
+mod rms;
 
 use std::fmt::Debug;
 use std::io;
@@ -20,6 +21,7 @@ use discortp::discord::{IpDiscoveryPacket, IpDiscoveryType, MutableIpDiscoveryPa
 use discortp::rtcp::report::{MutableReceiverReportPacket, ReportBlockPacket};
 use discortp::rtp::{MutableRtpPacket, RtpType};
 use discortp::MutablePacket;
+use flume::{Receiver, Sender};
 pub use event::*;
 pub use opcode::*;
 use opus::{Application, Bitrate, Channels, Encoder};
@@ -42,6 +44,7 @@ use crate::constants::{
   CHANNEL_COUNT, CHUNK_DURATION, OPUS_SILENCE_FRAME, OPUS_SILENCE_FRAMES, SAMPLE_RATE, TIMESTAMP_STEP
 };
 use crate::provider::{SampleProvider, SampleProviderHandle};
+use crate::rms::RMS;
 use crate::udp::UdpVoiceConnection;
 use crate::ws::{VoiceConnectionMode, WebSocketVoiceConnection};
 
@@ -103,6 +106,11 @@ pub enum AudioFrame {
   Pcm(Vec<f32>)
 }
 
+#[derive(Debug)]
+pub enum VoiceConnectionEvent {
+  RmsPeak(f32)
+}
+
 pub struct VoiceConnection {
   pub ws: RwLock<Option<WebSocketVoiceConnection>>,
   ws_heartbeat_interval: Mutex<Option<Interval>>,
@@ -116,11 +124,16 @@ pub struct VoiceConnection {
   paused: StateFlow<bool>,
   silence_frames_left: AtomicU8,
   pub sample_buffer: SampleBuffer<f32>,
-  pub stop_udp_loop: AtomicBool
+  pub rms: std::sync::Mutex<RMS<f32>>,
+  pub stop_udp_loop: AtomicBool,
+  events_tx: Sender<VoiceConnectionEvent>,
+  pub events: Receiver<VoiceConnectionEvent>,
 }
 
 impl VoiceConnection {
   pub fn new() -> Result<Self> {
+    let (events_tx, events_rx) = flume::bounded(16);
+
     Ok(Self {
       ws: RwLock::new(None),
       ws_heartbeat_interval: Mutex::new(None),
@@ -134,7 +147,10 @@ impl VoiceConnection {
       paused: StateFlow::new(false),
       silence_frames_left: AtomicU8::new(0),
       sample_buffer: SampleBuffer::new(SAMPLE_RATE * 3, SAMPLE_RATE, SAMPLE_RATE * 2),
-      stop_udp_loop: AtomicBool::new(false)
+      rms: std::sync::Mutex::new(RMS::new(((SAMPLE_RATE * CHANNEL_COUNT) as f32 * 0.025) as usize)),
+      stop_udp_loop: AtomicBool::new(false),
+      events_tx,
+      events: events_rx
     })
   }
 
@@ -351,6 +367,7 @@ impl VoiceConnection {
 
   pub fn set_paused(&self, is_paused: bool) {
     self.paused.set(is_paused);
+    self.rms.lock().unwrap().reset();
     if is_paused {
       self.silence_frames_left.store(OPUS_SILENCE_FRAMES, Ordering::Relaxed);
     } else {
@@ -548,6 +565,22 @@ impl VoiceConnection {
         let mut data = vec![0f32; PACKET_SIZE];
         me.sample_buffer.read(&mut data).await?;
         // debug!("sending {} samples", PACKET_SIZE);
+
+        let (rms, samples_len) = {
+          let mut rms_lock = me.rms.lock().unwrap();
+          for sample in &data {
+            rms_lock.add_sample(*sample);
+          }
+
+          (rms_lock.calculate_rms(), rms_lock.samples.len())
+        };
+
+        if rms > 0.9 {
+          info!("rms: {} over {} samples", rms, samples_len);
+          // me.events_tx.send_async(VoiceConnectionEvent::RmsPeak(rms)).await.unwrap();
+          me.send_voice_packet(&ready, udp, AudioFrame::Opus(OPUS_SILENCE_FRAME.to_vec())).await?;
+          continue;
+        }
 
         me.send_voice_packet(&ready, udp, AudioFrame::Pcm(data)).await?;
         // samples.copy_within(PACKET_SIZE..got, 0);

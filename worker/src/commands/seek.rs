@@ -33,6 +33,7 @@ pub async fn seek(
 
     handle.seek(position).unwrap();
     player.connection.sample_buffer.clear().await;
+    player.connection.rms.lock().unwrap().reset();
 
     ctx
       .reply(format!("Seeked to {:?} (was: {:?})", position, current_position))

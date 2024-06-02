@@ -46,6 +46,8 @@ pub async fn play(
     .or_insert_with(|| Arc::new(Player::new(state.clone(), guild_id)));
 
   player.set_channel(channel_id.unwrap());
+  player.set_text_channel_id(ctx.channel_id());
+  player.set_context(ctx.serenity_context().clone()).await;
   if !player.connection.is_connected() {
     let shard_id = ShardId(guild_id.shard_id(ctx.cache()));
     let shard_manager = ctx.framework().shard_manager();

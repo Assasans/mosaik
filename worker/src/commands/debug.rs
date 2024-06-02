@@ -1,18 +1,20 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use poise::CreateReply;
 use serenity::all::CreateEmbed;
 
+use crate::{AnyError, PoiseContext};
+use crate::player::Player;
 use crate::state::get_player_or_fail;
 use crate::voice::ffmpeg::FFmpegSampleProviderHandle;
-use crate::{AnyError, PoiseContext};
 
 #[poise::command(prefix_command, track_edits, slash_command)]
 pub async fn debug(ctx: PoiseContext<'_>) -> Result<(), AnyError> {
   ctx.reply("Processing...").await?;
 
-  let player = get_player_or_fail!(ctx);
+  let player: Arc<Player> = get_player_or_fail!(ctx);
 
   let mut embed = CreateEmbed::default().title("Debug information");
 
@@ -43,6 +45,17 @@ pub async fn debug(ctx: PoiseContext<'_>) -> Result<(), AnyError> {
         false
       );
     }
+  }
+
+  {
+    let rms = player.connection.rms.lock().unwrap();
+    let rms = rms.calculate_rms();
+    let rms_db = 20.0 * (rms / 1.0).log10();
+    embed = embed.field(
+      "Audio levels",
+      format!("RMS over 25 ms: `{} dBV, {} Vrms`", rms_db, rms),
+      true
+    );
   }
 
   embed = embed.field(

@@ -7,17 +7,17 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::json;
-use serenity::all::{Cache, ChannelId, GuildId};
+use serenity::all::{Cache, ChannelId, CreateMessage, GuildId, MessageBuilder};
 use serenity::constants::Opcode;
 use serenity::gateway::{ShardMessenger, ShardRunnerMessage};
 use tokio::sync::oneshot;
 use tokio::time;
-use tracing::{debug, warn};
-use voice::{VoiceConnection, VoiceConnectionOptions, VoiceConnectionState};
+use tracing::{debug, info, warn};
+use voice::{VoiceConnection, VoiceConnectionEvent, VoiceConnectionOptions, VoiceConnectionState};
 
 use crate::player::queue::Queue;
 use crate::voice::MosaikVoiceManager;
-use crate::State;
+use crate::{PoiseContext, State};
 
 pub enum PlayerEvent {
   TrackFinished(usize)
@@ -28,6 +28,8 @@ pub struct Player {
   pub connection: Arc<VoiceConnection>,
 
   pub guild_id: RwLock<GuildId>,
+  pub context: tokio::sync::RwLock<Option<serenity::client::Context>>,
+  pub text_channel_id: RwLock<Option<ChannelId>>,
   pub channel_id: RwLock<Option<ChannelId>>,
 
   pub queue: Arc<Queue>,
@@ -45,6 +47,8 @@ impl Player {
       connection: Arc::new(VoiceConnection::new().unwrap()),
 
       guild_id: RwLock::new(guild_id),
+      context: tokio::sync::RwLock::new(None),
+      text_channel_id: RwLock::new(None),
       channel_id: RwLock::new(None),
 
       queue: Queue::new(),
@@ -56,6 +60,14 @@ impl Player {
 
   pub fn set_channel(&self, channel_id: ChannelId) {
     *self.channel_id.write().unwrap() = Some(channel_id);
+  }
+
+  pub async fn set_context(&self, context: serenity::client::Context) {
+    *self.context.write().await = Some(context);
+  }
+
+  pub fn set_text_channel_id(&self, channel_id: ChannelId) {
+    *self.text_channel_id.write().unwrap() = Some(channel_id);
   }
 
   pub fn get_channel(&self) -> Option<ChannelId> {
@@ -205,6 +217,22 @@ impl Player {
           .send_async(PlayerEvent::TrackFinished(x.queue.position()))
           .await
           .unwrap();
+      }
+    });
+
+    let clone = self.clone();
+    tokio::spawn(async move {
+      while let Ok(event) = clone.connection.events.recv_async().await {
+        info!("voice event: {:?}", event);
+        match event {
+          VoiceConnectionEvent::RmsPeak(rms) => {
+            info!("rms peak: {}", rms);
+            if let Some(context) = &*clone.context.read().await {
+              let channel_id = clone.text_channel_id.read().unwrap().unwrap();
+              channel_id.send_message(context, CreateMessage::new().content(format!("RMS peaked at `{}`, playback was paused.", rms))).await.unwrap();
+            }
+          }
+        }
       }
     });
 

@@ -19,3 +19,4 @@ xsalsa20poly1305 = { version = "0.9.0", default-features = false }
 utils = { path = "../utils" }
 ringbuf = "0.3.3"
 flume = "0.10.14"
+num-traits = "0.2.19"
