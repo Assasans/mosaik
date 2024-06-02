@@ -4,6 +4,7 @@ use std::time::Duration;
 use anyhow::Result;
 use poise::CreateReply;
 use serenity::all::CreateEmbed;
+use voice::constants::{CHANNEL_COUNT, SAMPLE_RATE};
 
 use crate::{AnyError, PoiseContext};
 use crate::player::Player;
@@ -49,11 +50,25 @@ pub async fn debug(ctx: PoiseContext<'_>) -> Result<(), AnyError> {
 
   {
     let rms = player.connection.rms.lock().unwrap();
-    let rms = rms.calculate_rms();
-    let rms_db = 20.0 * (rms / 1.0).log10();
+
+    let get_rms = |ms| {
+      let rms = rms.calculate_rms(SAMPLE_RATE * CHANNEL_COUNT * ms / 1000);
+      let rms_db = 20.0 * (rms / 1.0).log10();
+      (rms, rms_db)
+    };
+
+    let rms = vec![
+      (25, get_rms(25)),
+      (1000, get_rms(1000)),
+      (5000, get_rms(5000))
+    ];
+    let rms = rms.iter().map(|(window, (rms, rms_db))| {
+      format!("RMS over {} ms: `{} dBV, {} Vrms`", window, rms_db, rms)
+    }).collect::<Vec<_>>().join("\n");
+
     embed = embed.field(
       "Audio levels",
-      format!("RMS over 25 ms: `{} dBV, {} Vrms`", rms_db, rms),
+      format!("{}", rms),
       true
     );
   }

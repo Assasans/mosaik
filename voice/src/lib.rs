@@ -147,7 +147,7 @@ impl VoiceConnection {
       paused: StateFlow::new(false),
       silence_frames_left: AtomicU8::new(0),
       sample_buffer: SampleBuffer::new(SAMPLE_RATE * 3, SAMPLE_RATE, SAMPLE_RATE * 2),
-      rms: std::sync::Mutex::new(RMS::new(((SAMPLE_RATE * CHANNEL_COUNT) as f32 * 0.025) as usize)),
+      rms: std::sync::Mutex::new(RMS::new(((SAMPLE_RATE * CHANNEL_COUNT) as f32 * 5.0) as usize)),
       stop_udp_loop: AtomicBool::new(false),
       events_tx,
       events: events_rx
@@ -566,20 +566,11 @@ impl VoiceConnection {
         me.sample_buffer.read(&mut data).await?;
         // debug!("sending {} samples", PACKET_SIZE);
 
-        let (rms, samples_len) = {
-          let mut rms_lock = me.rms.lock().unwrap();
+        {
+          let mut rms = me.rms.lock().unwrap();
           for sample in &data {
-            rms_lock.add_sample(*sample);
+            rms.add_sample(*sample);
           }
-
-          (rms_lock.calculate_rms(), rms_lock.samples.len())
-        };
-
-        if rms > 0.9 {
-          info!("rms: {} over {} samples", rms, samples_len);
-          // me.events_tx.send_async(VoiceConnectionEvent::RmsPeak(rms)).await.unwrap();
-          me.send_voice_packet(&ready, udp, AudioFrame::Opus(OPUS_SILENCE_FRAME.to_vec())).await?;
-          continue;
         }
 
         me.send_voice_packet(&ready, udp, AudioFrame::Pcm(data)).await?;
