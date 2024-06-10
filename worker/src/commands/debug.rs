@@ -80,7 +80,8 @@ pub async fn debug(ctx: PoiseContext<'_>) -> Result<(), AnyError> {
       )
     }).collect::<Vec<_>>().join("\n");
 
-    let true_peak = 20.0 * ebur128.prev_true_peak(0).unwrap().log10();
+    let current_true_peak = 20.0 * ebur128.prev_true_peak(0).unwrap().log10();
+    let true_peak = 20.0 * ebur128.true_peak(0).unwrap().log10();
     let lufs_m = ebur128.loudness_momentary().unwrap();
     let lufs_s = ebur128.loudness_shortterm().unwrap();
     let lufs_i = ebur128.loudness_global().unwrap();
@@ -89,8 +90,9 @@ pub async fn debug(ctx: PoiseContext<'_>) -> Result<(), AnyError> {
     embed = embed.field(
       "Audio levels",
       format!(
-        "{}\nCurrent: {}\nMomentary loudness: {}\nShort-term loudness: {}\nIntegrated loudness: {}",
+        "{}\nCurrent: {}\nTrue Peak: {}\nMomentary loudness: {}\nShort-term loudness: {}\nIntegrated loudness: {}",
         rms,
+        wrap_warning(format!("`{:.2} dBTP`", current_true_peak), current_true_peak >= 0.0),
         wrap_warning(format!("`{:.2} dBTP`", true_peak), true_peak >= 0.0),
         wrap_warning(format!("`{:.1} LUFS`", lufs_m), lufs_m > lufs_target),
         wrap_warning(format!("`{:.1} LUFS`", lufs_s), lufs_s > lufs_target),
