@@ -3,6 +3,7 @@ pub mod player;
 pub mod providers;
 pub mod util;
 pub mod voice;
+mod provider_predictor;
 
 use std::env;
 use std::error::Error;

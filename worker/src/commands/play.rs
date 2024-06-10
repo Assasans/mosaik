@@ -11,6 +11,7 @@ use crate::providers::{
   FFmpegMediaProvider, MediaProvider, SberzvukMediaProvider, VkMediaProvider, YtDlpMediaProvider
 };
 use crate::{AnyError, PoiseContext, pretty_print_error, VOICE_MANAGER};
+use crate::provider_predictor::{MediaProviderPredictor, PredictedProvider};
 use crate::providers::factory::{MediaProviderFactory, YtDlpPlaylistMediaProviderFactory};
 
 #[poise::command(prefix_command, track_edits, slash_command)]
@@ -65,21 +66,43 @@ pub async fn play(
     ws.as_ref().unwrap().send_speaking(true).await?;
   }
 
-  let (provider, input) = source.split_once(':').context("no media provider passed")?;
-  let mut providers: Vec<Box<dyn MediaProvider>> = match provider {
-    "ffmpeg" => vec![Box::new(FFmpegMediaProvider::new(input.to_owned()))],
-    "yt-dlp" => vec![Box::new(YtDlpMediaProvider::new(input.to_owned()))],
-    "yt-dlp-playlist" => {
-      let mut factory = YtDlpPlaylistMediaProviderFactory::new(input.to_owned());
-      factory.init().await.unwrap();
-      factory.get_media_providers().await.unwrap()
-    },
-    "zvuk" => vec![Box::new(SberzvukMediaProvider::new(input.parse::<i64>()?))],
-    "vk" => {
-      let (owner_id, track_id) = input.split_once('_').unwrap();
-      vec![Box::new(VkMediaProvider::new(owner_id.parse::<i64>()?, track_id.parse::<i64>()?))]
+  let predictor = MediaProviderPredictor::new();
+  let splitted = source.split_once(':').and_then(|splitted| {
+    if ["ffmpeg", "yt-dlp", "yt-dlp-playlist", "zvuk", "vk"].contains(&splitted.0) {
+      Some(splitted)
+    } else {
+      None
     }
-    _ => todo!("media provider {} is not implemented", provider)
+  });
+  let mut providers: Vec<Box<dyn MediaProvider>> = if let Some((provider, input)) = splitted {
+    match provider {
+      "ffmpeg" => vec![Box::new(FFmpegMediaProvider::new(input.to_owned()))],
+      "yt-dlp" => vec![Box::new(YtDlpMediaProvider::new(input.to_owned()))],
+      "yt-dlp-playlist" => {
+        let mut factory = YtDlpPlaylistMediaProviderFactory::new(input.to_owned());
+        factory.init().await.unwrap();
+        factory.get_media_providers().await.unwrap()
+      },
+      "zvuk" => vec![Box::new(SberzvukMediaProvider::new(input.parse::<i64>()?))],
+      "vk" => {
+        let (owner_id, track_id) = input.split_once('_').unwrap();
+        vec![Box::new(VkMediaProvider::new(owner_id.parse::<i64>()?, track_id.parse::<i64>()?))]
+      }
+      _ => todo!("media provider {} is not implemented", provider)
+    }
+  } else {
+    let prediction = predictor.predict(&source);
+    info!("prediction: {:?}", prediction);
+
+    match prediction[0].provider {
+      PredictedProvider::FFmpeg => vec![Box::new(FFmpegMediaProvider::new(source))],
+      PredictedProvider::YtDlp => vec![Box::new(YtDlpMediaProvider::new(source))],
+      PredictedProvider::YtDlpPlaylist => {
+        let mut factory = YtDlpPlaylistMediaProviderFactory::new(source);
+        factory.init().await.unwrap();
+        factory.get_media_providers().await.unwrap()
+      }
+    }
   };
 
   for mut provider in providers {
